@@ -1,0 +1,7 @@
+path: datasets/20260910/mf_559_brightness
+train: train/images
+val: valid/images
+
+names:
+  0: mf
+  1: ian

@@ -1,0 +1,17 @@
+# Clinical data, weights and results are not part of this repository
+datasets/
+runs/
+weights/
+compare_results/
+dental_project/
+mf_position/
+*.pt
+*.pth
+*.onnx
+*.xml
+*.bin
+*.csv
+*.jpg
+*.png
+*.log
+__pycache__/
