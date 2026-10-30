@@ -170,10 +170,11 @@ def fold_paths(fold, split, base_dir=BASE_DIR):
     return [Path(line) for line in (base_dir / "yaml" / f"fold{fold}_{split}.txt").read_text().splitlines() if line]
 
 
-def train(name, config, fold, epochs, base_dir=BASE_DIR, weights_dir=None, seed=SEED):
+def train(name, config, fold, epochs, base_dir=BASE_DIR, weights_dir=None, seed=SEED, extra=None):
+    # extra: 額外加進訓練集的影像(2026-10-28 半監督訓練的假標註,kfold_pseudo.py);標註讀影像上一層的 labels/
     weights_dir = weights_dir or WEIGHTS_DIR
     torch.manual_seed(seed)
-    train_x, train_y = to_tensors(load_samples(fold_paths(fold, "train", base_dir)), config["size"])
+    train_x, train_y = to_tensors(load_samples(fold_paths(fold, "train", base_dir) + list(extra or [])), config["size"])
     val_samples = load_samples(fold_paths(fold, "val", base_dir))
 
     model = build_model(config).to(DEVICE)

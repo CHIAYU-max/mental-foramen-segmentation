@@ -80,6 +80,7 @@ def overview(wb):
         ("最終 U-Net", "ResNet34 encoder(ImageNet 預訓練)+ U-Net decoder;輸入 512×512 灰階 / 255;強增強(翻轉、亮度對比、縮放 0.8–1.2、旋轉 ±15°、平移 ±10%);AdamW lr 3e-4、cosine、100 epochs、batch 8;交叉熵 + Dice loss;取驗證 Dice 最佳的 epoch"),
         ("YOLO", "YOLOv8n-seg,imgsz 1280、200 epochs、patience 50、batch 16;推論時每個類別取信心最高的候選(conf ≥ 0.01、NMS IoU 0.3)"),
         ("多數決", "測試集上 5 折模型逐像素多數決"),
+        ("後處理(lcc)", "2026-10-28 起頦孔只保留最大連通區塊(8 連通,多數決之後);YOLO 本來就只取一個實例,不受影響。「新切分_*」中標 lcc 的表為論文主結果"),
         ("指標", "Dice、IoU、容許 2/4 像素邊界誤差的 Dice、HD95、ASSD;頦孔定位:命中率 = 預測中心落在 GT 等效半徑 R 以內的比例"),
         ("信賴區間", "以病人為單位重抽樣 2000 次的 95% 區間(種子 0)"),
         ("注意", "沒有像素間距,距離以像素或 R 的倍數表示;兩批全景片解析度不一致,以 R 為單位的指標較可比"),
@@ -87,7 +88,8 @@ def overview(wb):
     ]
     s.table("研究設定", ["項目", "內容"], lambda first: rows)
     sheets = [
-        ("新切分_主結果", "新切分: 七個模型、U-Net 與 YOLO26s 五個種子、合併種子的病人層級檢定(論文主表)"),
+        ("新切分_主結果", "新切分: 七個模型、U-Net 與 YOLO26s 五個種子、合併種子的病人層級檢定(論文主表;以 lcc 版本為準)"),
+        ("新切分_延伸", "新切分(lcc): 困難案例、可辨識性分層、串接式推論、R34/384、推論時翻轉、半監督"),
         ("新切分_運算量", "新切分: U-Net encoder 與輸入尺寸的精度對運算量(三個種子)"),
         ("主要結果_種子","最終 U-Net 與 YOLO 在三個隨機種子下的結果,平均、標準差與差距以公式計算"),
         ("差值CI", "U-Net − YOLO 差值的 95% 信賴區間(各種子、三種子平均、依可辨識性分組)"),
@@ -353,6 +355,121 @@ def read_summary(name):
         return {(r["model"], r["setting"]): r for r in csv.DictReader(f)}
 
 
+def read_postproc():
+    # mf_postproc.py 的 summary_postproc.csv,只取 lcc → {(model, setting): row}
+    path = PANO / "summary_postproc.csv"
+    if not path.exists():
+        print(f"[略過] 找不到 {path}")
+        return {}
+    with open(path, newline="") as f:
+        return {(r["model"], r["setting"]): r for r in csv.DictReader(f) if r["post"] == "lcc"}
+
+
+def seed_rows(data, tag, seed_ids, metric, settings=PANO_SETTINGS):
+    # 每個設定一列: 各種子的值 + 平均 / 標準差公式。種子 0 的模型名稱沒有 _s0
+    cols = [get_column_letter(2 + i) for i in range(len(seed_ids))]
+    out = []
+    for setting, label in settings:
+        vals = [data.get((tag + (f"_s{k}" if k else ""), setting), {}).get(metric) for k in seed_ids]
+        out.append([label] + [float(v) if v else None for v in vals]
+                   + [f"=AVERAGE({cols[0]}{{r}}:{cols[-1]}{{r}})", f"=STDEV({cols[0]}{{r}}:{cols[-1]}{{r}})"])
+    return out
+
+
+def bootstrap_table(s, name, title, note):
+    # seed_bootstrap.py 的合併種子結果(seeds = pooled)
+    path = PANO / name
+    if not path.exists():
+        print(f"[略過] 找不到 {path}")
+        return
+    with open(path, newline="") as f:
+        boot = [r for r in csv.DictReader(f) if r["seeds"] == "pooled"]
+    mlabels = {"mf_hit_1R": "mf 命中 1R", "mf_dice": "mf Dice", "ian_dice": "ian Dice"}
+    s.table(title, ["集合", "指標", "ROI 數", "組數", "差", "95% CI 下", "95% CI 上", "p"],
+            lambda first: [[r["setting"], mlabels[r["metric"]], int(r["n_roi"]), int(r["n_clusters"]), float(r["diff"]),
+                            float(r["ci_low"]), float(r["ci_high"]), float(r["p"])] for r in boot],
+            [None, None, None, None, D4, D4, D4, D3], note=note)
+
+
+def read_rows(name):
+    path = PANO / name
+    if not path.exists():
+        print(f"[略過] 找不到 {path}")
+        return []
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def pano_more(wb):
+    # 2026-10-30: 10/28–29 在新切分上的延伸實驗(都是 lcc 後)
+    s = Sheet(wb, "新切分_延伸", "新切分的延伸實驗(頦孔一律 lcc)",
+              ["困難案例、可辨識性、串接式推論、解析度 384、推論時翻轉、半監督;數字讀各程式的輸出 CSV,平均與標準差用公式"])
+    unc = read_rows("uncertainty_summary_lcc.csv")
+    s.table("以模型分歧標出困難案例(U-Net 五個種子)",
+            ["集合", "ROI", "沒命中", "AUROC u→沒命中", "AUROC u→無法辨識", "命中 @100%", "@95%", "@90%", "@80%"],
+            lambda first: [[r["setting"], int(r["n"]), int(r["misses"]), float(r["auroc_miss"]), float(r["auroc_not_visible"]),
+                            float(r["hit@1.00"]), float(r["hit@0.95"]), float(r["hit@0.90"]), float(r["hit@0.80"])] for r in unc],
+            [None, None, None, D3, D3, PCT, PCT, PCT, PCT],
+            note="@x% = 只保留分歧度最低的 x%,其餘交給醫師。來源: pano_uncertainty.py --post lcc → uncertainty_summary_lcc.csv")
+
+    vis = read_rows("visibility_strata_lcc.csv")
+    s.table("可辨識性分層", ["模型", "集合", "分層", "ROI", "mf Dice", "Dice 95% CI 下", "Dice 95% CI 上", "mf 命中 1R", "命中 95% CI 下", "命中 95% CI 上"],
+            lambda first: [[r["model"], r["setting"], r["stratum"], int(r["n"])] + [float(r[k]) for k in
+                           ("mf_dice", "mf_dice_low", "mf_dice_high", "mf_hit_1R", "mf_hit_low", "mf_hit_high")] for r in vis],
+            [None, None, None, None, D4, D4, D4, D4, D4, D4],
+            note="來源: pano_visibility.py --post lcc → visibility_strata_lcc.csv;可辨識 = 嚴格標準下人眼看得出頦孔")
+
+    cascade = read_rows("cascade_s01234_lcc.csv")
+    policies = [("single", "", "單一模型"), ("cascade2", "0.5", "先 2 折,tau 0.5"), ("cascade3", "0.3", "先 3 折,tau 0.3"), ("full", "", "五折多數決")]
+    for metric, mlabel in [("hit", "mf 命中 1R"), ("folds_run", "平均跑幾折")]:
+        def rows(first, metric=metric):
+            out = []
+            for tag, name in [("r34_imagenet_aug", "U-Net"), ("yolo26s-seg", "YOLO26s")]:
+                for policy, tau, plabel in policies:
+                    vals = {int(r["seed"]): float(r[metric]) for r in cascade
+                            if r["model"] == tag and r["policy"] == policy and r["tau"] == tau}
+                    out.append([f"{name} {plabel}"] + [vals.get(k) for k in range(5)] + ["=AVERAGE(B{r}:F{r})", "=STDEV(B{r}:F{r})"])
+            return out
+        s.table(f"串接式推論(測試集): {mlabel}", ["策略", "種子 0", "種子 1", "種子 2", "種子 3", "種子 4", "平均", "標準差"], rows,
+                [None] + [D4 if metric == "hit" else "0.00"] * 7,
+                note="lcc 只套在最後輸出;投票與一致性判斷用原遮罩。來源: cascade_infer.py --post lcc → cascade_s01234_lcc.csv")
+
+    post = read_postproc()
+    for tag, name in [("r34_imagenet_aug", "R34/512(主結果)"), ("r34_imagenet_aug_tta", "R34/512 + 翻轉"),
+                      ("r34_imagenet_aug_384", "R34/384"), ("r34_imagenet_aug_384_tta", "R34/384 + 翻轉")]:
+        # _tta 的種子名稱是 <設定>_s<k>_tta
+        base, tta = (tag[:-4], "_tta") if tag.endswith("_tta") else (tag, "")
+        data = {(base + (f"_s{k}" if k else ""), setting): post.get((base + (f"_s{k}" if k else "") + tta, setting), {})
+                for k in range(5) for setting, _ in PANO_SETTINGS}
+        s.table(f"{name}: mf 命中 1R,lcc(五個訓練種子)", ["設定", "種子 0", "種子 1", "種子 2", "種子 3", "種子 4", "平均", "標準差"],
+                lambda first, base=base, data=data: seed_rows(data, base, range(5), "mf_hit_1R"), [None] + [D4] * 7,
+                note="翻轉 = 推論時原圖 + 左右翻轉,softmax 平均(2 倍運算),不採用。來源: unet_tta.py、mf_postproc.py → summary_postproc.csv")
+    bootstrap_table(s, "seed_bootstrap_r34_imagenet_aug_384_s01234_lcc.csv", "R34/512 − R34/384(合併五個種子,lcc)",
+                    "來源: seed_bootstrap.py --post lcc --prefix _r384 --other r34_imagenet_aug_384 --seeds 0 1 2 3 4")
+
+    for tag, name in [("r34_imagenet_aug", "基準(只用真標註)"), ("r34_imagenet_aug_pl", "半監督(加假標註)")]:
+        s.table(f"{name}: mf 命中 1R,lcc(種子 0–2)", ["設定", "種子 0", "種子 1", "種子 2", "平均", "標準差"],
+                lambda first, tag=tag: seed_rows(post, tag, range(3), "mf_hit_1R"), [None] + [D4] * 5,
+                note="假標註: 沒有標註的 1018 個 ROI 中,多數決有頦孔且 u ≤ 0.2577 的約 26%。來源: kfold_pseudo.py、mf_postproc.py")
+    bootstrap_table(s, "seed_bootstrap_r34_imagenet_aug_pl_s012_lcc.csv", "基準 − 半監督(合併三個種子,lcc)",
+                    "來源: seed_bootstrap.py --post lcc --prefix _pl --other r34_imagenet_aug_pl --seeds 0 1 2")
+
+    # 2026-10-30: 定數字前的檢查
+    ci = read_rows("uncertainty_ci_lcc.csv")
+    s.table("困難案例的 95% CI(以組 bootstrap)", ["集合", "指標", "估計", "CI 下", "CI 上"],
+            lambda first: [[r["setting"], r["metric"], float(r["estimate"]), float(r["ci_low"]), float(r["ci_high"])] for r in ci],
+            [None, None, D4, D4, D4], note="gain = 保留後命中 − 全部命中。來源: uncertainty_ci.py → uncertainty_ci_lcc.csv")
+    threshold = read_rows("hit_threshold_lcc.csv")
+    s.table("命中門檻的敏感度(U-Net vs YOLO26s,五個種子)", ["集合", "門檻 (R)", "ROI", "U-Net", "YOLO26s", "差", "CI 下", "CI 上", "p"],
+            lambda first: [[r["setting"], float(r["threshold_R"]), int(r["n"])] + [float(r[k]) for k in ("unet", "yolo26s", "diff", "ci_low", "ci_high", "p")] for r in threshold],
+            [None, "0.0", None, D4, D4, D4, D4, D4, D4], note="來源: hit_threshold.py → hit_threshold_lcc.csv")
+    single = read_rows("distill/single_r18_imagenet_aug_384_lcc_summary.csv")
+    s.table("R18/384 單一模型對五折多數決(測試集)", ["項目", "命中或差", "標準差", "mf Dice", "CI 下", "CI 上", "p"],
+            lambda first: [[r["row"]] + [float(r[k]) if r[k] else None for k in ("hit", "hit_sd", "mf_dice", "ci_low", "ci_high", "p")] for r in single],
+            [None, D4, D4, D4, D4, D4, D4], note="單一模型用全部 559 張訓練,種子 0–4;取代舊的「90.3%、少 2.3 點」。來源: single_small_lcc.py")
+    s.finish()
+
+
 def pano(wb):
     # 2026-10-28: 新切分(全景片層級,kfold_pano.py)的結果。之前的工作表都是舊的病人層級切分(kfold_patient)
     s = Sheet(wb, "新切分_主結果", "新切分(病人 ∪ 來源全景片,301 組)的結果",
@@ -393,16 +510,18 @@ def pano(wb):
             s.table(f"{name}: {mlabel}(五個訓練種子)", ["設定", "種子 0", "種子 1", "種子 2", "種子 3", "種子 4", "平均", "標準差"],
                     rows, [None] + [D4] * 7)
 
-    path = PANO / "seed_bootstrap_yolo26s-seg_s01234.csv"
-    if path.exists():
-        with open(path, newline="") as f:
-            boot = [r for r in csv.DictReader(f) if r["seeds"] == "pooled"]
-        mlabels = {"mf_hit_1R": "mf 命中 1R", "mf_dice": "mf Dice", "ian_dice": "ian Dice"}
-        s.table("U-Net − YOLO26s(合併五個種子,以病人 / 組為單位)", ["集合", "指標", "ROI 數", "組數", "差", "95% CI 下", "95% CI 上", "p"],
-                lambda first: [[r["setting"], mlabels[r["metric"]], int(r["n_roi"]), int(r["n_clusters"]), float(r["diff"]),
-                                float(r["ci_low"]), float(r["ci_high"]), float(r["p"])] for r in boot],
-                [None, None, None, None, D4, D4, D4, D3],
-                note="組 bootstrap 20000 次;p 為組為單位的符號翻轉置換檢定。來源: seed_bootstrap.py --seeds 0 1 2 3 4")
+    bootstrap_table(s, "seed_bootstrap_yolo26s-seg_s01234.csv", "U-Net − YOLO26s(合併五個種子,以病人 / 組為單位,無後處理)",
+                    "組 bootstrap 20000 次;p 為組為單位的符號翻轉置換檢定。來源: seed_bootstrap.py --seeds 0 1 2 3 4")
+
+    # 2026-10-28 起頦孔只留最大連通區塊(lcc)列為標準流程,論文措辭以下面兩張表為準
+    post = read_postproc()
+    for tag, name in [("r34_imagenet_aug", "U-Net ResNet34"), ("yolo26s-seg", "YOLO26s-seg(batch 16)")]:
+        for metric, mlabel in [("mf_hit_1R", "mf 命中 1R"), ("mf_dice", "mf Dice")]:
+            s.table(f"{name}: {mlabel},lcc(五個訓練種子)", ["設定", "種子 0", "種子 1", "種子 2", "種子 3", "種子 4", "平均", "標準差"],
+                    lambda first, tag=tag, metric=metric: seed_rows(post, tag, range(5), metric), [None] + [D4] * 7,
+                    note="來源: mf_postproc.py → summary_postproc.csv(post = lcc)。YOLO 推論本來就只取一個實例,lcc 不改變結果")
+    bootstrap_table(s, "seed_bootstrap_yolo26s-seg_s01234_lcc.csv", "U-Net − YOLO26s(合併五個種子,以病人 / 組為單位,lcc;論文主結果)",
+                    "來源: seed_bootstrap.py --post lcc --seeds 0 1 2 3 4")
     s.finish()
 
     # 精度對運算量: 單一 U-Net 的 encoder 與輸入尺寸,三個種子
@@ -518,7 +637,7 @@ def appendix(wb):
 def main():
     wb = Workbook()
     wb.remove(wb.active)
-    for build in (overview, pano, seeds,diff_ci, details, ablation, learning, batches, agreement, visibility, preprocessing, others, evidence, appendix):
+    for build in (overview, pano, pano_more, seeds,diff_ci, details, ablation, learning, batches, agreement, visibility, preprocessing, others, evidence, appendix):
         build(wb)
     # 開啟時重新計算所有公式
     wb.calculation.fullCalcOnLoad = True

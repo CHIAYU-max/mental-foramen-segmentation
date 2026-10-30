@@ -19,6 +19,7 @@ from pano_visibility import VISIBILITY_CSV, load_test
 #   成員或多數決沒有頦孔時該成員的 IoU 記為 0(多數決與成員都沒有則記為 1)。不需要 GT,部署時也算得出來。
 #   評估: AUROC(u 預測「沒命中」/ 預測「無法辨識」)、依 u 由低到高保留 ROI 時的命中率與 Dice(risk-coverage)。
 #   只讀已存的遮罩,不重新推論、不需要 GPU。
+#   --post lcc(2026-10-29): 多數決後頦孔只留最大區塊再評分(u 仍用原本的成員遮罩),輸出檔名加 _lcc。
 SEEDS = ["r34_imagenet_aug", "r34_imagenet_aug_s1", "r34_imagenet_aug_s2"]
 COVERAGES = [1.0, 0.95, 0.9, 0.85, 0.8, 0.7]
 
@@ -69,7 +70,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", nargs="+", default=SEEDS, help="同一設定、不同訓練種子的 masks 名稱")
     parser.add_argument("--project", default=PROJECT)
+    parser.add_argument("--post", choices=["none", "lcc"], default="none")
     args = parser.parse_args()
+    from mf_postproc import apply_post
+    suffix = "" if args.post == "none" else f"_{args.post}"
     sys.stdout.reconfigure(line_buffering=True)
     out_dir = ROOT / "compare_results" / args.project
     with open(VISIBILITY_CSV, newline="") as f:
@@ -81,12 +85,12 @@ def main():
             shape = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE).shape
             gt = load_gt(path.stem, shape, path.parent.parent / "labels", {})
             vote, u = disagreement([read_masks(out_dir, "cv", tag, fold, path.stem) for tag in args.seeds])
-            m = image_metrics(vote, gt)
+            m = image_metrics(apply_post(vote, args.post), gt)
             per_roi.append({"setting": "cv", "stem": path.stem, "members": len(args.seeds), "u": u,
                             "hit": m.get("mf_hit_1R", float("nan")), "dice": m["mf_dice"]})
     for stem, gt in load_test():
         vote, u = disagreement([read_masks(out_dir, "test", tag, fold, stem) for tag in args.seeds for fold in range(K_FOLDS)])
-        m = image_metrics(vote, gt)
+        m = image_metrics(apply_post(vote, args.post), gt)
         per_roi.append({"setting": "test", "stem": stem, "members": len(args.seeds) * K_FOLDS, "u": u,
                         "hit": m.get("mf_hit_1R", float("nan")), "dice": m["mf_dice"]})
     # 沒有 GT 頦孔的 ROI 沒有命中與否,不納入
@@ -100,12 +104,12 @@ def main():
         for c in COVERAGES:
             print(f"    保留 {c:>4.0%}: 命中 {s[f'hit@{c:.2f}']:.1%}   mf Dice {s[f'dice@{c:.2f}']:.3f}")
 
-    with open(out_dir / "uncertainty_per_roi.csv", "w", newline="") as f:
+    with open(out_dir / f"uncertainty_per_roi{suffix}.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(per_roi[0]) + ["mf_visible"])
         writer.writeheader()
         for r in per_roi:
             writer.writerow({**{k: round(v, 5) if isinstance(v, float) else v for k, v in r.items()}, "mf_visible": visible.get(r["stem"], "")})
-    with open(out_dir / "uncertainty_summary.csv", "w", newline="") as f:
+    with open(out_dir / f"uncertainty_summary{suffix}.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(summary[0]))
         writer.writeheader()
         writer.writerows({k: round(v, 4) if isinstance(v, float) else v for k, v in s.items()} for s in summary)
@@ -127,8 +131,8 @@ def main():
     ax.grid(alpha=0.3)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(out_dir / "risk_coverage.png", dpi=200)
-    print(f"\n輸出: {out_dir / 'uncertainty_per_roi.csv'}、uncertainty_summary.csv、risk_coverage.png")
+    fig.savefig(out_dir / f"risk_coverage{suffix}.png", dpi=200)
+    print(f"\n輸出: {out_dir / f'uncertainty_per_roi{suffix}.csv'}、uncertainty_summary{suffix}.csv、risk_coverage{suffix}.png")
 
 
 if __name__ == "__main__":
