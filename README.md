@@ -17,7 +17,8 @@ panoramic radiograph
                  └─ stage 2: segment the mental foramen (mf) and the canal (ian)
                      ├─ U-Net with a ResNet34 encoder, 512 × 512                   kfold_unet_variants.py
                      └─ YOLO-seg (v8 / 11 / 26, n / s, imgsz 1280)
-                         └─ foramen centroid, hit rate, tooth position (Tebo & Telford)  mf_position.py
+                         └─ keep the largest foramen region (lcc)                  mf_postproc.py
+                             └─ foramen centroid, hit rate, tooth position (Tebo & Telford)  mf_position.py
 ```
 
 ## Results
@@ -25,39 +26,45 @@ panoramic radiograph
 559 ROIs cropped from at least 294 panoramic radiographs, 5-fold cross-validation grouped by patient and source
 radiograph (`kfold_pano.py`), plus an independent test set of 137 ROIs. A foramen counts as found ("hit") when the
 predicted centroid lies within the ground-truth foramen's equivalent radius. Five training seeds, test set with a
-five-fold pixel-wise majority vote:
+five-fold pixel-wise majority vote, keeping only the largest connected foramen region (lcc):
 
 | Model | Test hit rate | Test mf Dice | Test ian Dice |
 | --- | --- | --- | --- |
-| U-Net (ResNet34) | 92.6 ± 1.7% | 0.71 | 0.68 |
-| YOLO26s-seg (best of six YOLO models) | 87.7 ± 1.7% | 0.71 | 0.68 |
+| U-Net (ResNet34) | 93.0 ± 0.8% | 0.712 | 0.683 |
+| YOLO26s-seg (best of six YOLO models) | 87.7 ± 1.7% | 0.707 | 0.685 |
 
-- With the five seeds pooled and a patient-level bootstrap, the U-Net finds more foramina: +4.8 points on the test
-  set (95% CI 1.6–8.2, p = 0.006) and +1.9 points in cross-validation (95% CI 0.2–3.6, p = 0.034). Dice is not
+- With the five seeds pooled and a patient-level bootstrap, the U-Net finds more foramina: +5.3 points on the test
+  set (95% CI 2.4–8.5, p = 0.0005) and +3.8 points in cross-validation (95% CI 2.1–5.6, p < 0.001). Dice is not
   significantly different (`pano_stats.py`, `seed_bootstrap.py`).
+- The gap holds at hit thresholds of 1–2 radii, but not at 0.5 radii on the test set (+2.9 points, p = 0.21), and the
+  median localization error is no better than YOLO26s. The U-Net wins by making fewer large errors, not by being more
+  precise (`hit_threshold.py`).
 - Accuracy is limited by how visible the foramen is: on images graded as visible, Dice reaches 0.84, above the
   annotator's own repeat agreement (0.79) (`pano_visibility.py`).
 - Disagreement among models trained with different seeds flags uncertain cases without labels: referring the 10%
-  most uncertain ROIs to a clinician raises the hit rate on the rest from 92.7% to 97.6% on the test set
-  (`pano_uncertainty.py`).
+  most uncertain ROIs to a clinician raises the hit rate on the rest from 87.8% to 94.0% in cross-validation (gain
+  95% CI 4.6–8.2 points) and from 92.7% to 97.6% on the test set (gain 95% CI 1.4–7.8 points; five seeds pooled into one
+  vote) (`pano_uncertainty.py`, `uncertainty_ci.py`).
 - Deployment: per-layer rooflines and end-to-end latency (0.15 s per radiograph on a GPU, 0.4–1.1 s without one;
   `roofline_profile.py`, `pipeline_timing.py`), INT8 quantization with OpenVINO NNCF (2.5–3× faster on a CPU;
-  `int8_quant.py`, `int8_ensemble.py`), and a cascade that stops after two folds when they agree (49% less compute
-  at the same hit rate; `cascade_infer.py`).
+  `int8_quant.py`, `int8_ensemble.py`), and a cascade that stops after two folds when they agree (49% less compute,
+  92.9% vs 93.0% hit rate; `cascade_infer.py`). A single ResNet18 U-Net at 384 px needs 1/12 of the ensemble's compute and
+  finds 89.6 ± 0.6% of foramina, 3.4 points fewer (95% CI 1.0–5.9, p = 0.010; `single_small_lcc.py`).
 
 ## Main scripts
 
 | Script | Purpose |
 | --- | --- |
 | `fdi_cropped.py` | Stage 1: tooth segmentation, filtering, FDI numbering, ROI cropping |
-| `kfold_pano.py` | Stage 2 model comparison: grouped 5-fold split, U-Net and six YOLO models, evaluation |
+| `kfold_pano.py`, `find_same_patient_cv.py` | Stage 2 model comparison: grouped 5-fold split, U-Net and six YOLO models, evaluation; same-patient check across folds |
 | `kfold_unet_variants.py` | U-Net model (`ResNetUNet`), configurations, training and inference |
 | `paper_metrics.py` | Metrics: Dice, hit rate, cross-validation and test-set evaluation |
-| `pano_stats.py`, `seed_bootstrap.py` | Paired tests and patient-level bootstrap across seeds |
-| `pano_visibility.py`, `pano_uncertainty.py` | Visibility-stratified results; model disagreement as an uncertainty score |
+| `mf_postproc.py` | Keep the largest connected foramen region (lcc, standard pipeline) |
+| `pano_stats.py`, `seed_bootstrap.py`, `hit_threshold.py` | Paired tests, patient-level bootstrap across seeds, hit-threshold sensitivity |
+| `pano_visibility.py`, `pano_uncertainty.py`, `uncertainty_ci.py` | Visibility-stratified results; model disagreement as an uncertainty score, with confidence intervals |
 | `stage1_eval.py`, `stage1_failures.py`, `e2e_eval.py` | Stage-1 validation and the end-to-end comparison with manual ROIs |
 | `mf_position.py`, `mf_position_eval.py`, `position_server.py` | Tooth-position rule, its evaluation, and a browser labeling tool |
-| `roofline_profile.py`, `pipeline_timing.py`, `int8_quant.py` | Performance analysis and INT8 quantization |
+| `roofline_profile.py`, `pipeline_timing.py`, `int8_quant.py`, `single_small_lcc.py` | Performance analysis, INT8 quantization and a small single model |
 | `roofline_workload.py`, `accel_model.py` | Workload characterization and a first-order analytical model of an INT8 accelerator |
 
 Scripts run from the repository root and import shared constants from each other (`compare_yolo_unet.py`,
