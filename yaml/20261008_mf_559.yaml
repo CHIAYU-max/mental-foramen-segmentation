@@ -1,7 +1,0 @@
-path: datasets/20260909/mf_559__unsharp_mask
-train: train/images
-val: valid/images
-
-names:
-  0: mf
-  1: ian
