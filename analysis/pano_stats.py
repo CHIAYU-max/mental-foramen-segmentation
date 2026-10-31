@@ -10,6 +10,7 @@ from stage2.compare_yolo_unet import GT_DIR, IMAGES_DIR, NAMES, ROOT, index_file
 from stage2.kfold_pano import EXCLUDE_TEST, PROJECT
 from stage2.kfold_unet_variants import fold_paths
 from stage2.kfold_yolo_unet import K_FOLDS
+from stage2.mf_postproc import POSTS, apply_post
 from analysis.paper_metrics import image_metrics, read_masks
 
 # kfold_pano 的成對檢定(2026-10-26): 以 U-Net 為參考,與各 YOLO 逐張 ROI 比較。
@@ -17,6 +18,7 @@ from analysis.paper_metrics import image_metrics, read_masks
 #   CV: 559 張,每張只用沒看過它的那一折;測試: 137 張,五折逐像素多數決(與 kfold_pano.evaluate 相同)。
 #   Dice 用 Wilcoxon 符號等級檢定(兩邊都有值的 ROI);命中用精確 McNemar(只看不一致的 ROI)。
 #   同一個指標、同一個設定下對多個 YOLO 的 p 值另做 Holm 校正。
+#   --post lcc(2026-10-28): 頦孔只留最大連通區塊(CV 每張、測試先多數決再處理),輸出檔名加 _lcc。
 #   注意: 同一位病人的多張 ROI 不獨立(CV 尤其明顯),p 值偏樂觀;論文可搭配 paper_metrics.py 的病人層級 bootstrap。
 REFERENCE = "r34_imagenet_aug"
 OTHERS = ["yolo26s-seg", "yolo11s-seg", "yolo26n-seg", "yolo11n-seg", "yolov8n-seg", "yolov8s-seg"]
@@ -24,17 +26,17 @@ DICE_KEYS = ["mf_dice", "ian_dice"]
 HIT_KEY = "mf_hit_1R"
 
 
-def per_roi(tag, out_dir, test):
+def per_roi(tag, out_dir, test, post="none"):
     rows = {"cv": {}, "test": {}}
     for fold in range(K_FOLDS):
         for path in fold_paths(fold, "val", out_dir):
             shape = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE).shape
             gt = load_gt(path.stem, shape, path.parent.parent / "labels", {})
-            rows["cv"][path.stem] = image_metrics(read_masks(out_dir, "cv", tag, fold, path.stem), gt)
+            rows["cv"][path.stem] = image_metrics(apply_post(read_masks(out_dir, "cv", tag, fold, path.stem), post), gt)
     for stem, gt in test:
         preds = [read_masks(out_dir, "test", tag, fold, stem) for fold in range(K_FOLDS)]
         vote = {cls: np.sum([p[cls] for p in preds], axis=0) > K_FOLDS / 2 for cls in NAMES.values()}
-        rows["test"][stem] = image_metrics(vote, gt)
+        rows["test"][stem] = image_metrics(apply_post(vote, post), gt)
     return rows
 
 
@@ -73,7 +75,10 @@ def main():
     parser.add_argument("--others", nargs="+", default=OTHERS, help="masks 下的模型名稱(例如 yolo26s-seg_b8)")
     parser.add_argument("--project", default=PROJECT)
     parser.add_argument("--suffix", default="", help="輸出檔名後綴(例如多種子的 _s1),避免覆蓋主結果的 per_roi.csv / stats.csv")
+    parser.add_argument("--post", choices=POSTS, default="none", help="頦孔後處理;lcc 時輸出檔名再加 _lcc")
     args = parser.parse_args()
+    if args.post != "none":
+        args.suffix += f"_{args.post}"
     sys.stdout.reconfigure(line_buffering=True)
     out_dir = ROOT / "compare_results" / args.project
 
@@ -85,7 +90,7 @@ def main():
         shape = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE).shape
         test.append((stem, load_gt(stem, shape, test_gt, {})))
 
-    data = {tag: per_roi(tag, out_dir, test) for tag in [args.reference] + args.others}
+    data = {tag: per_roi(tag, out_dir, test, args.post) for tag in [args.reference] + args.others}
     with open(out_dir / f"per_roi{args.suffix}.csv", "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["model", "setting", "stem", *DICE_KEYS, HIT_KEY])

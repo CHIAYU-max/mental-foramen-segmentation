@@ -40,7 +40,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tags", nargs="+", default=TAGS, help="masks 下的模型名稱")
     parser.add_argument("--project", default=PROJECT)
+    parser.add_argument("--post", choices=["none", "lcc"], default="none", help="2026-10-29: 頦孔後處理(同 pano_stats.py --post),輸出檔名加 _lcc")
     args = parser.parse_args()
+    suffix = "" if args.post == "none" else f"_{args.post}"
     sys.stdout.reconfigure(line_buffering=True)
     out_dir = ROOT / "compare_results" / args.project
 
@@ -66,7 +68,7 @@ def main():
     rng = np.random.default_rng(0)
     results = []
     for tag in args.tags:
-        data = per_roi(tag, out_dir, test)
+        data = per_roi(tag, out_dir, test, args.post)
         for setting, rows_by_stem in data.items():
             for name, want in STRATA:
                 stems = [s for s in sorted(rows_by_stem) if s in visible and (want is None or visible[s] == want)]
@@ -98,11 +100,11 @@ def main():
                     h = [r["mf_hit_1R"] for r in picked]
                     print(f"  {setting:<5}{name:<13} mf Dice {np.mean(d):.3f} ± {np.std(d, ddof=1):.3f}   命中 {np.mean(h):.1%} ± {np.std(h, ddof=1):.1%}")
 
-    with open(out_dir / "visibility_strata.csv", "w", newline="") as f:
+    with open(out_dir / f"visibility_strata{suffix}.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(results[0]))
         writer.writeheader()
         writer.writerows({k: round(v, 4) if isinstance(v, float) else v for k, v in r.items()} for r in results)
-    print(f"\n輸出: {out_dir / 'visibility_strata.csv'}")
+    print(f"\n輸出: {out_dir / f'visibility_strata{suffix}.csv'}")
 
 
 if __name__ == "__main__":

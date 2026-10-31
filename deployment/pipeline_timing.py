@@ -16,7 +16,9 @@ from stage1.fdi_cropped import assign_fdi_indices, find_mandibular_border, get_s
 from stage2.kfold_pano import EXCLUDE_TEST, PROJECT, ROI_SOURCES, yolo_dir
 from stage2.kfold_patient import UNET_TAG
 from stage2.kfold_unet_variants import CONFIGS, build_model, predict_masks
+from stage2.mf_postproc import largest
 from data.mf_unsharp_mask import unsharp_mask
+from analysis.pano_uncertainty import iou
 from stage2.predict_unet import DEVICE
 from stage2.rerank_candidates import get_candidates, mask_distance
 
@@ -30,6 +32,9 @@ from stage2.rerank_candidates import get_candidates, mask_distance
 #   → 第二階段分割 mf / ian(U-Net 或 YOLO,推論規則與 kfold_pano.py 相同)
 #   → mf 質心、mf 與 ian 的最短距離
 # 影像: 測試集 ROI 的來源全景片(roi_sources.csv 中 set = test,排除 EXCLUDE_TEST),每張全景片最多兩個 ROI。
+# 2026-10-28 定案流程(--policy,只用於 U-Net): 頦孔只留最大區塊(lcc);single = 第 0 折,full = 五折多數決,
+#   cascade = 先跑第 0、1 折,頦孔 IoU ≥ --tau(或兩者都沒有頦孔)就用交集,否則補跑第 2–4 折做五折多數決(cascade_infer.py 的先 2 折)。
+#   多數決與 lcc 的時間記在 stage2_select。--panos-dir: 改用某個資料夾的全部影像(例如放大到我們解析度的 Tufts,不需要病人影像)。
 TEETH_MODEL = ROOT / "dental_project" / "train_success_replica3" / "weights" / "best.pt"
 PANO_DIR = ROOT / "dental_project" / "original_pictures"
 OUT_DIR = ROOT / "compare_results" / "roofline"
@@ -105,29 +110,47 @@ class OpenVINOUNet:
         return {cls: pred == c + 1 for c, cls in NAMES.items()}
 
 
-def load_stage2(tag, openvino=None):
+def load_unet(fold, openvino=None):
+    unet = build_model({**CONFIGS[UNET_TAG], "pretrained": False}).to(DEVICE)
+    unet.load_state_dict(torch.load(ROOT / "compare_results" / PROJECT / "weights" / f"{UNET_TAG}_fold{fold}.pth", map_location=DEVICE)["model_state_dict"])
+    return OpenVINOUNet(unet.eval(), openvino) if openvino else unet.eval()
+
+
+def load_stage2(tag, openvino=None, policy="single"):
     if tag == "unet":
-        unet = build_model({**CONFIGS[UNET_TAG], "pretrained": False}).to(DEVICE)
-        unet.load_state_dict(torch.load(ROOT / "compare_results" / PROJECT / "weights" / f"{UNET_TAG}_fold0.pth", map_location=DEVICE)["model_state_dict"])
-        return OpenVINOUNet(unet.eval(), openvino) if openvino else unet.eval()
+        return [load_unet(f, openvino) for f in (range(5) if policy != "single" else [0])]
     weights = yolo_dir(PROJECT, tag, 0) / "weights" / "best.pt"
     return openvino_yolo(weights, 1280) if openvino else YOLO(weights)
 
 
-def stage2(tag, model, roi, extra):
-    # 回傳 ({類別: bool 遮罩}, 模型時間, 挑選候選時間);extra = OpenVINO 時的 device 與 imgsz
+def unet_once(model, gray):
+    if isinstance(model, OpenVINOUNet):
+        return timed(model.predict, gray, CONFIGS[UNET_TAG]["size"])
+    return timed(predict_masks, model, gray, CONFIGS[UNET_TAG]["size"])
+
+
+def vote(preds):
+    return {cls: np.sum([p[cls] for p in preds], axis=0) > len(preds) / 2 for cls in NAMES.values()}
+
+
+def stage2(tag, model, roi, extra, policy="single", tau=0.5):
+    # 回傳 ({類別: bool 遮罩}, 模型時間, 挑選候選 / 多數決與 lcc 時間, 跑了幾個模型);extra = OpenVINO 時的 device 與 imgsz
     if tag == "unet":
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        if isinstance(model, OpenVINOUNet):
-            masks, ms = timed(model.predict, gray, CONFIGS[UNET_TAG]["size"])
-        else:
-            masks, ms = timed(predict_masks, model, gray, CONFIGS[UNET_TAG]["size"])
-        return masks, ms, 0.0
+        n = {"single": 1, "full": 5, "cascade": 2}[policy]
+        runs = [unet_once(m, gray) for m in model[:n]]
+        if policy == "cascade":
+            a, b = runs[0][0]["mf"], runs[1][0]["mf"]
+            if not (a.any() == b.any() and (not a.any() or iou(a, b) >= tau)):
+                runs += [unet_once(m, gray) for m in model[2:]]
+        preds = [r[0] for r in runs]
+        masks, post_ms = timed(lambda: (lambda v: {**v, "mf": largest(v["mf"])})(preds[0] if len(preds) == 1 else vote(preds)))
+        return masks, sum(r[1] for r in runs), post_ms, len(runs)
     result, ms = timed(lambda: model.predict(roi, conf=MIN_CONF, iou=IOU, max_det=50, retina_masks=True, verbose=False, **extra)[0])
     shape = tuple(result.orig_shape)
     candidates, select_ms = timed(get_candidates, result, shape)
     masks = {cls: items[0][1] if items else np.zeros(shape, dtype=bool) for cls, items in candidates.items()}
-    return masks, ms, select_ms
+    return masks, ms, select_ms, 1
 
 
 def measure(masks):
@@ -140,7 +163,7 @@ def measure(masks):
     return m["m10"] / m["m00"], m["m01"] / m["m00"], dist
 
 
-def run_pano(path, teeth, tag, model, extra):
+def run_pano(path, teeth, tag, model, extra, policy="single", tau=0.5):
     t = {name: 0.0 for name, _ in STAGES}
     total_start = time.perf_counter()
     img, t["read"] = timed(cv2.imread, str(path))
@@ -159,11 +182,12 @@ def run_pano(path, teeth, tag, model, extra):
         t["crop"] += ms
         if roi.size:
             rois.append((side, roi))
-    found = []
+    found, models_run = [], 0
     for side, roi in rois:
         um, ms = timed(unsharp_mask, roi, **UNSHARP)
         t["unsharp_mask"] += ms
-        masks, model_ms, select_ms = stage2(tag, model, um, extra)
+        masks, model_ms, select_ms, n = stage2(tag, model, um, extra, policy, tau)
+        models_run += n
         t["stage2_model"] += model_ms
         t["stage2_select"] += select_ms
         (cx, cy, dist), ms = timed(measure, masks)
@@ -172,7 +196,7 @@ def run_pano(path, teeth, tag, model, extra):
     if CUDA:
         torch.cuda.synchronize()
     wall = (time.perf_counter() - total_start) * 1e3
-    return {"pano": path.name, "teeth": len(upper) + len(lower), "rois": len(rois), "found": " ".join(found), **{k: round(v, 3) for k, v in t.items()}, "sum_ms": round(sum(t.values()), 3), "wall_ms": round(wall, 3)}
+    return {"pano": path.name, "teeth": len(upper) + len(lower), "rois": len(rois), "models_run": models_run, "found": " ".join(found), **{k: round(v, 3) for k, v in t.items()}, "sum_ms": round(sum(t.values()), 3), "wall_ms": round(wall, 3)}
 
 
 def device_name(openvino):
@@ -184,12 +208,12 @@ def device_name(openvino):
     return f"CPU({platform.processor() or platform.machine()},PyTorch {torch.get_num_threads()} 執行緒)"
 
 
-def write_summary(rows, tag, out, openvino=None):
+def write_summary(rows, tag, out, openvino=None, out_name=None):
     total = statistics.mean(r["sum_ms"] for r in rows)
     lines = [
         f"# 端到端延遲分解: 第二階段 {tag}",
         "",
-        f"- 全景片 {len(rows)} 張(測試集來源),ROI 共 {sum(r['rois'] for r in rows)} 個;裝置 {device_name(openvino)};主機 {platform.node()}",
+        f"- 全景片 {len(rows)} 張,ROI 共 {sum(r['rois'] for r in rows)} 個,第二階段共跑 {sum(r['models_run'] for r in rows)} 次模型;裝置 {device_name(openvino)};主機 {platform.node()}",
         f"- 每張全景片平均 {total:.1f} ms(各階段相加),實測牆鐘時間平均 {statistics.mean(r['wall_ms'] for r in rows):.1f} ms;中位數 {statistics.median(r['wall_ms'] for r in rows):.1f} ms",
         f"- stage1_nms_masks = 第一階段 YOLO 呼叫的總時間減去 Ultralytics 回報的 preprocess 與 inference(NMS、retina_masks 放大遮罩、轉成多邊形)",
         "",
@@ -201,7 +225,7 @@ def write_summary(rows, tag, out, openvino=None):
         lines.append(f"| {name} | {where} | {statistics.mean(values):.2f} | {statistics.median(values):.2f} | {statistics.mean(values) / total:.1%} |")
     gpu = sum(statistics.mean(r[n] for r in rows) for n, where in STAGES if where == "GPU")
     lines += ["", f"GPU 上的神經網路推論共佔 {gpu / total:.1%},其餘 {1 - gpu / total:.1%} 是 CPU 上的前後處理(Amdahl: 只加速模型,整體最多快 {total / (total - gpu):.2f} 倍)。"]
-    (out / f"pipeline_{tag}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out / f"pipeline_{out_name or tag}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
 
 
@@ -212,30 +236,35 @@ def main():
     parser.add_argument("--limit", type=int, default=0, help="只跑前 N 張(試跑用)")
     parser.add_argument("--out", default=str(OUT_DIR))
     parser.add_argument("--openvino", choices=["CPU", "GPU"], help="兩個模型都改用 OpenVINO 推論(GPU = Intel 內顯);第一次會先匯出模型")
+    parser.add_argument("--policy", choices=["single", "cascade", "full"], default="single", help="U-Net 的推論策略(見檔頭)")
+    parser.add_argument("--tau", type=float, default=0.5)
+    parser.add_argument("--panos-dir", help="改用這個資料夾的全部影像")
+    parser.add_argument("--name", default=None, help="輸出檔名(預設 = --stage2)")
     args = parser.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    panos = test_panos()
+    panos = sorted(p for p in Path(args.panos_dir).iterdir() if p.suffix.lower() in (".jpg", ".png")) if args.panos_dir else test_panos()
     if args.limit:
         panos = panos[:args.limit]
     # 匯出的模型不帶訓練時的 imgsz,不指定會退回 640;PyTorch 權重則沿用訓練時的 imgsz(第一階段 1024、第二階段 1280)
     device = {"device": f"intel:{args.openvino.lower()}"} if args.openvino else {}
     teeth = TimedYOLO(openvino_yolo(TEETH_MODEL, 1024) if args.openvino else YOLO(TEETH_MODEL), **device, **({"imgsz": 1024} if args.openvino else {}))
     extra = {**device, "imgsz": 1280} if args.openvino else {}
-    model = load_stage2(args.stage2, args.openvino)
+    model = load_stage2(args.stage2, args.openvino, args.policy)
     with torch.inference_mode():
         for path in panos[:args.warmup]:
-            run_pano(path, teeth, args.stage2, model, extra)
+            run_pano(path, teeth, args.stage2, model, extra, args.policy, args.tau)
         rows = []
         for i, path in enumerate(panos, 1):
-            rows.append(run_pano(path, teeth, args.stage2, model, extra))
+            rows.append(run_pano(path, teeth, args.stage2, model, extra, args.policy, args.tau))
             print(f"[{i}/{len(panos)}] {path.name}: {rows[-1]['wall_ms']:.1f} ms, ROI {rows[-1]['rois']} ({rows[-1]['found']})")
-    with open(out / f"pipeline_{args.stage2}.csv", "w", newline="") as f:
+    name = args.name or args.stage2
+    with open(out / f"pipeline_{name}.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    write_summary(rows, args.stage2, out, args.openvino)
+    write_summary(rows, args.stage2, out, args.openvino, name)
 
 
 if __name__ == "__main__":

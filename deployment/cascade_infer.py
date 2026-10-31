@@ -8,6 +8,7 @@ import numpy as np
 from stage2.compare_yolo_unet import NAMES, ROOT
 from stage2.kfold_pano import PROJECT
 from stage2.kfold_yolo_unet import K_FOLDS
+from stage2.mf_postproc import POSTS, apply_post
 from analysis.paper_metrics import image_metrics, read_masks
 from analysis.pano_uncertainty import iou
 from analysis.pano_visibility import load_test
@@ -16,6 +17,8 @@ from analysis.pano_visibility import load_test
 #   策略: 先跑 k 折(k = 2 或 3);這 k 個預測的頦孔一致就停,不一致才補跑其餘各折、做五折多數決。
 #     一致 = 成員兩兩的頦孔 IoU 都 ≥ tau(兩者都沒預測頦孔算一致);停下時的預測 = 這 k 個的逐像素多數決(k = 2 時為交集)。
 #   對每個種子、每一種「先跑哪 k 折」的組合(C(5,k) 種)平均,避免挑到特別好的折;報 測試集命中、mf Dice、平均跑幾折。
+#   --post lcc(2026-10-28): 只處理最後輸出的遮罩(單一模型的預測、多數決的結果),頦孔只留最大連通區塊;
+#     投票與一致性判斷仍用原本的遮罩(與 mf_postproc.py、pano_stats.py 相同: 先多數決再處理)。輸出檔名加 _lcc。
 #   只讀已存的測試集遮罩,不重新推論、不需要 GPU。CV 每張只有一個模型看過它,不適用。
 TAUS = [0.0, 0.3, 0.5, 0.7, 0.9]
 
@@ -46,6 +49,7 @@ def main():
     parser.add_argument("--models", nargs="+", default=["r34_imagenet_aug", "yolo26s-seg"])
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     parser.add_argument("--project", default=PROJECT)
+    parser.add_argument("--post", choices=POSTS, default="none", help="頦孔後處理")
     args = parser.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
     out_dir = ROOT / "compare_results" / args.project
@@ -60,14 +64,14 @@ def main():
             for stem, gt in test:
                 preds = [read_masks(out_dir, "test", tag, f, stem) for f in folds]
                 cache = {}
-                full = score(vote(preds), gt, cache, "full")
+                full = score(apply_post(vote(preds), args.post), gt, cache, "full")
                 acc.setdefault(("full", ""), []).append((*full, K_FOLDS))
                 for f in folds:
-                    acc.setdefault(("single", ""), []).append((*score(preds[f], gt, cache, f"single{f}"), 1))
+                    acc.setdefault(("single", ""), []).append((*score(apply_post(preds[f], args.post), gt, cache, f"single{f}"), 1))
                 for k in (2, 3):
                     for first in itertools.combinations(folds, k):
                         part = [preds[f] for f in first]
-                        early = score(vote(part), gt, cache, f"vote{first}")
+                        early = score(apply_post(vote(part), args.post), gt, cache, f"vote{first}")
                         for tau in TAUS:
                             stop = agree(part, tau)
                             acc.setdefault((f"cascade{k}", tau), []).append((*early, k) if stop else (*full, K_FOLDS))
@@ -78,7 +82,7 @@ def main():
                              "folds_run": round(float(v[:, 2].mean()), 3)})
             print(f"{tag} 完成", flush=True)
 
-    path = out_dir / f"cascade_s{''.join(map(str, args.seeds))}.csv"
+    path = out_dir / f"cascade_s{''.join(map(str, args.seeds))}{'' if args.post == 'none' else '_' + args.post}.csv"
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
         writer.writeheader()

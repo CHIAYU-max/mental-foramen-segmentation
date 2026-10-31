@@ -98,6 +98,10 @@ These ran on the earlier patient-level split with one seed, so their values are 
 | `position/mf_position.py`, `position/mf_position_eval.py`, `position/position_server.py` | Tooth-position rule, its evaluation, and a browser labeling tool |
 | `deployment/roofline_profile.py`, `deployment/pipeline_timing.py`, `deployment/int8_quant.py`, `deployment/single_small_lcc.py` | Performance analysis, INT8 quantization and a small single model |
 | `deployment/roofline_workload.py`, `deployment/accel_model.py` | Workload characterization and a first-order analytical model of an INT8 accelerator |
+| `stage2/unet_tta.py`, `stage2/pseudo_label.py`, `stage2/kfold_pseudo.py` | Flip test-time augmentation and semi-supervised training, neither adopted |
+| `analysis/unlabeled_pool.py`, `analysis/unlabeled_predict.py`, `analysis/unlabeled_shift.py` | Distribution check on unlabeled ROIs |
+| `stage1/fdi_tufts.py`, `stage1/tufts_teeth.py`, `stage1/teeth32_compare.py`, `analysis/tufts_eval.py` | Experiments on the external Tufts Dental Database; the data is not included |
+| `position/mf_position_sensitivity.py` | Sensitivity of the tooth-position rule near its boundaries |
 
 ## Layout
 
