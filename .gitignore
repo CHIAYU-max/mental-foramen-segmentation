@@ -15,3 +15,5 @@ mf_position/
 *.png
 *.log
 __pycache__/
+# Aggregate plots only
+!docs/figures/*.png

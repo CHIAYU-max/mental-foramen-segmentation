@@ -83,6 +83,12 @@ These ran on the earlier patient-level split with one seed, so their values are 
 
 ![Analytical accelerator model with DRAM, SRAM and PE array](docs/figures/accelerator_model.svg)
 
+Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency across PE arrays and SRAM sizes:
+
+![Measured per-layer roofline of the U-Net](docs/figures/roofline_unet.png)
+
+![Modeled latency by PE array and SRAM size](docs/figures/accelerator_latency.png)
+
 ## Main scripts
 
 | Script | Purpose |
