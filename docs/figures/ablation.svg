@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 382" role="img" aria-label="Ablation results"><style>
+.bg{fill:#fcfcfb}.t{fill:#0b0b0b}.s{fill:#52514e}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.edge{stroke:#8a8983}
+.a{--c:#2a78d6}.b{--c:#eb6834}.c{--c:#6e6d68}
+.fill{fill:var(--c)}.line{stroke:var(--c)}.ring{stroke:#fcfcfb}.tint{fill:var(--c);fill-opacity:.12}.card{fill:#fcfcfb}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.title{font-size:16px;font-weight:600}.small{font-size:12px}.bold{font-weight:600}
+@media (prefers-color-scheme:dark){
+.bg,.card{fill:#1a1a19}.t{fill:#f0efec}.s{fill:#c3c2b7}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.edge{stroke:#8a8983}
+.a{--c:#3987e5}.b{--c:#d95926}.c{--c:#a9a89f}.ring{stroke:#1a1a19}}
+</style><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a8983"/></marker></defs><rect class="bg" width="860" height="382" rx="8"/>
+<text x="24.0" y="30.0" class="t title" text-anchor="start">The ResNet34 encoder and strong augmentation matter most</text>
+<text x="24.0" y="50.0" class="s small" text-anchor="start">Foramen Dice, seed 0. Earlier patient-level split</text>
+<rect x="24" y="64" width="11" height="11" rx="2" class="a fill"/>
+<text x="40.0" y="74.0" class="s small" text-anchor="start">Cross-validation</text>
+<rect x="160" y="64" width="11" height="11" rx="2" class="b fill"/>
+<text x="176.0" y="74.0" class="s small" text-anchor="start">Test set, five-fold vote</text>
+<line x1="210.0" y1="96.0" x2="210.0" y2="326.0" class="axis" stroke-width="1" />
+<text x="210.0" y="345.0" class="s small" text-anchor="middle">0.0</text>
+<line x1="357.5" y1="96.0" x2="357.5" y2="326.0" class="grid" stroke-width="1" />
+<text x="357.5" y="345.0" class="s small" text-anchor="middle">0.2</text>
+<line x1="505.0" y1="96.0" x2="505.0" y2="326.0" class="grid" stroke-width="1" />
+<text x="505.0" y="345.0" class="s small" text-anchor="middle">0.4</text>
+<line x1="652.5" y1="96.0" x2="652.5" y2="326.0" class="grid" stroke-width="1" />
+<text x="652.5" y="345.0" class="s small" text-anchor="middle">0.6</text>
+<line x1="800.0" y1="96.0" x2="800.0" y2="326.0" class="grid" stroke-width="1" />
+<text x="800.0" y="345.0" class="s small" text-anchor="middle">0.8</text>
+<text x="198.0" y="122.0" class="t small" text-anchor="end">Final model</text>
+<path d="M210,103h513.0a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-513.0z" class="a fill"/>
+<text x="733.0" y="114.0" class="s small" text-anchor="start">0.701</text>
+<path d="M210,119h504.1a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-504.1z" class="b fill"/>
+<text x="724.1" y="130.0" class="s small" text-anchor="start">0.689</text>
+<text x="198.0" y="168.0" class="t small" text-anchor="end">Without pretraining</text>
+<path d="M210,149h507.8a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-507.8z" class="a fill"/>
+<text x="727.8" y="160.0" class="s small" text-anchor="start">0.694</text>
+<path d="M210,165h504.9a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-504.9z" class="b fill"/>
+<text x="724.9" y="176.0" class="s small" text-anchor="start">0.690</text>
+<text x="198.0" y="214.0" class="t small" text-anchor="end">Without strong augmentation</text>
+<path d="M210,195h493.8a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-493.8z" class="a fill"/>
+<text x="713.8" y="206.0" class="s small" text-anchor="start">0.675</text>
+<path d="M210,211h497.5a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-497.5z" class="b fill"/>
+<text x="717.5" y="222.0" class="s small" text-anchor="start">0.680</text>
+<text x="198.0" y="260.0" class="t small" text-anchor="end">Plain U-Net, strong aug.</text>
+<path d="M210,241h459.1a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-459.1z" class="a fill"/>
+<text x="679.1" y="252.0" class="s small" text-anchor="start">0.628</text>
+<path d="M210,257h395.7a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-395.7z" class="b fill"/>
+<text x="615.7" y="268.0" class="s small" text-anchor="start">0.542</text>
+<text x="198.0" y="306.0" class="t small" text-anchor="end">Plain U-Net, basic aug.</text>
+<path d="M210,287h402.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-402.4z" class="a fill"/>
+<text x="622.4" y="298.0" class="s small" text-anchor="start">0.551</text>
+<path d="M210,303h341.9a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h-341.9z" class="b fill"/>
+<text x="561.9" y="314.0" class="s small" text-anchor="start">0.469</text></svg>

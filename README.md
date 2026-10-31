@@ -8,6 +8,8 @@ The radiographs and annotations are clinical data and are **not** included. This
 
 ## Pipeline
 
+![Two-stage pipeline from panoramic radiograph to foramen, tooth position and clinician review](docs/figures/pipeline.svg)
+
 ```
 panoramic radiograph
  └─ stage 1: YOLOv8s-seg tooth instance segmentation (imgsz 1024)                 stage1/fdi_cropped.py
@@ -50,6 +52,36 @@ five-fold pixel-wise majority vote, keeping only the largest connected foramen r
   `deployment/int8_quant.py`, `deployment/int8_ensemble.py`), and a cascade that stops after two folds when they agree (49% less compute,
   92.9% vs 93.0% hit rate; `deployment/cascade_infer.py`). A single ResNet18 U-Net at 384 px needs 1/12 of the ensemble's compute and
   finds 89.6 ± 0.6% of foramina, 3.4 points fewer (95% CI 1.0–5.9, p = 0.010; `deployment/single_small_lcc.py`).
+
+## Figures
+
+Figures hold aggregate results and diagrams only, with no radiographs or annotations. `docs/make_figures.py` regenerates them.
+
+### Current results
+
+New split, five seeds, lcc.
+
+![Hit rate by distance threshold for U-Net and YOLO26s](docs/figures/hit_threshold.svg)
+
+![Hit rate on retained ROIs by share referred to a clinician](docs/figures/referral.svg)
+
+![Test hit rate against compute for four strategies](docs/figures/compute_tradeoff.svg)
+
+### Earlier experiments
+
+These ran on the earlier patient-level split with one seed, so their values are not comparable with the table above. The conclusions are what carry over.
+
+![Foramen Dice of the ablation variants](docs/figures/ablation.svg)
+
+![Foramen Dice by number of training ROIs](docs/figures/learning_curve.svg)
+
+![Foramen Dice difference of nine preprocessing methods](docs/figures/preprocessing.svg)
+
+### Hardware analysis
+
+![Roofline schematic with U-Net and YOLO26n](docs/figures/roofline.svg)
+
+![Analytical accelerator model with DRAM, SRAM and PE array](docs/figures/accelerator_model.svg)
 
 ## Main scripts
 

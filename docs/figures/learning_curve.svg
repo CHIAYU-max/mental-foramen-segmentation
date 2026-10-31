@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 372" role="img" aria-label="Learning curve"><style>
+.bg{fill:#fcfcfb}.t{fill:#0b0b0b}.s{fill:#52514e}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.edge{stroke:#8a8983}
+.a{--c:#2a78d6}.b{--c:#eb6834}.c{--c:#6e6d68}
+.fill{fill:var(--c)}.line{stroke:var(--c)}.ring{stroke:#fcfcfb}.tint{fill:var(--c);fill-opacity:.12}.card{fill:#fcfcfb}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.title{font-size:16px;font-weight:600}.small{font-size:12px}.bold{font-weight:600}
+@media (prefers-color-scheme:dark){
+.bg,.card{fill:#1a1a19}.t{fill:#f0efec}.s{fill:#c3c2b7}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.edge{stroke:#8a8983}
+.a{--c:#3987e5}.b{--c:#d95926}.c{--c:#a9a89f}.ring{stroke:#1a1a19}}
+</style><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a8983"/></marker></defs><rect class="bg" width="860" height="372" rx="8"/>
+<text x="24.0" y="30.0" class="t title" text-anchor="start">More labels would add little</text>
+<text x="24.0" y="50.0" class="s small" text-anchor="start">Foramen Dice by training size, five-fold mean, seed 0. Earlier patient-level split</text>
+<rect x="24" y="64" width="11" height="11" rx="2" class="a fill"/>
+<text x="40.0" y="74.0" class="s small" text-anchor="start">Cross-validation</text>
+<rect x="160" y="64" width="11" height="11" rx="2" class="b fill"/>
+<text x="176.0" y="74.0" class="s small" text-anchor="start">Test set</text>
+<line x1="68.0" y1="314.0" x2="828.0" y2="314.0" class="grid" stroke-width="1" />
+<text x="60.0" y="318.0" class="s small" text-anchor="end">0.55</text>
+<line x1="68.0" y1="260.5" x2="828.0" y2="260.5" class="grid" stroke-width="1" />
+<text x="60.0" y="264.5" class="s small" text-anchor="end">0.60</text>
+<line x1="68.0" y1="207.0" x2="828.0" y2="207.0" class="grid" stroke-width="1" />
+<text x="60.0" y="211.0" class="s small" text-anchor="end">0.65</text>
+<line x1="68.0" y1="153.5" x2="828.0" y2="153.5" class="grid" stroke-width="1" />
+<text x="60.0" y="157.5" class="s small" text-anchor="end">0.70</text>
+<line x1="68.0" y1="100.0" x2="828.0" y2="100.0" class="grid" stroke-width="1" />
+<text x="60.0" y="104.0" class="s small" text-anchor="end">0.75</text>
+<text x="114.0" y="333.0" class="s small" text-anchor="middle">113</text>
+<text x="338.0" y="333.0" class="s small" text-anchor="middle">225</text>
+<text x="560.0" y="333.0" class="s small" text-anchor="middle">336</text>
+<text x="782.0" y="333.0" class="s small" text-anchor="middle">447</text>
+<line x1="68.0" y1="314.0" x2="828.0" y2="314.0" class="axis" stroke-width="1" />
+<path d="M114.0,270.1L338.0,219.8L560.0,189.9L782.0,185.6" class="b line" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+<circle cx="114.0" cy="270.1" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="338.0" cy="219.8" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="560.0" cy="189.9" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="782.0" cy="185.6" r="5" class="b fill ring" stroke-width="2"/>
+<path d="M114.0,205.9L338.0,179.2L560.0,154.6L782.0,152.4" class="a line" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+<circle cx="114.0" cy="205.9" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="338.0" cy="179.2" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="560.0" cy="154.6" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="782.0" cy="152.4" r="5" class="a fill ring" stroke-width="2"/>
+<text x="782.0" y="141.4" class="t small" text-anchor="middle">0.701</text>
+<text x="782.0" y="206.6" class="t small" text-anchor="middle">0.670</text>
+<text x="448.0" y="356.0" class="s small" text-anchor="middle">Training ROIs</text></svg>
