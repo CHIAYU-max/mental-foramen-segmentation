@@ -53,6 +53,15 @@ five-fold pixel-wise majority vote, keeping only the largest connected foramen r
   most uncertain ROIs to a clinician raises the hit rate on the rest from 87.8% to 94.0% in cross-validation (gain
   95% CI 4.6–8.2 points) and from 92.7% to 97.6% on the test set (gain 95% CI 1.4–7.8 points; five seeds pooled into one
   vote) (`analysis/pano_uncertainty.py`, `analysis/uncertainty_ci.py`).
+- Tooth position (Tebo & Telford classes, which tooth the foramen lies beneath; one annotator, test set): 103 of 132 foramina
+  have normal dentition. On those, the full pipeline (stage-1 ROI, U-Net, lcc, tooth-axis rule) gives the annotator's answer for
+  92 / 102 = 90.2% (95% CI 83.8–96.0, bootstrap by radiograph), and automatically cropped ROIs give the same answers as manual ones.
+  The rule alone on the ground-truth foramen agrees on 98 / 103; the 5 disagreements lie just past the rule's boundary and were
+  relabeled after review (rule 103 / 103, pipeline 97 / 102), which is reported separately because the review came after seeing the
+  rule. Missing teeth (21) and wrong FDI numbering (8), 22% of foramina, have no valid answer; flagging a side when two tooth
+  numberings disagree on teeth x4–x6, or when it has fewer teeth than the other side, catches 21 / 29 of them and sends 17.5% of
+  normal ones to review (this combination was chosen on the test set and still needs independent validation;
+  `position/position_report.py`, `position/fdi_flag.py`, `position/side_count_flag.py`).
 - Deployment: per-layer rooflines and end-to-end latency (0.15 s per radiograph on a GPU, 0.4–1.1 s without one;
   `deployment/roofline_profile.py`, `deployment/pipeline_timing.py`), INT8 quantization with OpenVINO NNCF (2.5–3× faster on a CPU;
   `deployment/int8_quant.py`, `deployment/int8_ensemble.py`), and a cascade that stops after two folds when they agree (49% less compute,
@@ -117,6 +126,9 @@ Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency acr
 | `analysis/unlabeled_pool.py`, `analysis/unlabeled_predict.py`, `analysis/unlabeled_shift.py` | Distribution check on unlabeled ROIs |
 | `stage1/fdi_tufts.py`, `stage1/tufts_teeth.py`, `stage1/teeth32_compare.py`, `analysis/tufts_eval.py` | Experiments on the external Tufts Dental Database; the data is not included |
 | `position/mf_position_sensitivity.py` | Sensitivity of the tooth-position rule near its boundaries |
+| `position/position_report.py` | Tooth-position report: accuracy and kappa with confidence intervals by radiograph, error sources, rule variants |
+| `position/fdi_flag.py`, `position/side_count_flag.py`, `position/gap_flag.py` | Flags for missing teeth or wrong FDI numbering: agreement of two numberings, left/right tooth count, inter-tooth gaps (gaps added nothing) |
+| `position/cascade_position.py` | Tooth position with the cascade's outputs (intersection, union, first model) |
 
 ## Layout
 

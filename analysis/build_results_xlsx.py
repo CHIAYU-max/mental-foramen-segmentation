@@ -91,6 +91,7 @@ def overview(wb):
         ("新切分_主結果", "新切分: 七個模型、U-Net 與 YOLO26s 五個種子、合併種子的病人層級檢定(論文主表;以 lcc 版本為準)"),
         ("新切分_延伸", "新切分(lcc): 困難案例、可辨識性分層、串接式推論與輸出方式、R34/384、推論時翻轉、半監督、瘦 decoder、端到端、量化、自動 ROI估計"),
         ("新切分_舊實驗重跑", "新切分(lcc): 消融、學習曲線、CLAHE 前處理重跑(取代舊切分的三張工作表的結論)"),
+        ("牙位", "測試集的牙位正確率:正常牙、缺牙、FDI 錯分組;規則與自動流程"),
         ("新切分_運算量", "新切分: U-Net encoder 與輸入尺寸的精度對運算量(三個種子)"),
         ("主要結果_種子","最終 U-Net 與 YOLO 在三個隨機種子下的結果,平均、標準差與差距以公式計算"),
         ("差值CI", "U-Net − YOLO 差值的 95% 信賴區間(各種子、三種子平均、依可辨識性分組)"),
@@ -543,6 +544,64 @@ def pano_rerun(wb):
     s.finish()
 
 
+def tooth_position(wb):
+    # 2026-11-04: 牙位(測試集)。標註讀複查後的 labels_rater_adjudicated.csv,規則讀 mf_position/key.csv,自動流程讀 mf_position_eval.py 的輸出
+    s = Sheet(wb, "牙位", "頦孔牙位(Tebo & Telford,v2 參考線 + 中央一半),測試集",
+              ["標註者一位;複查後的標註(原始標註另存在 original 欄)。正常牙 = 標註者給出 1–6 的項目;缺牙、FDI 錯沒有正確答案",
+               "來源: mf_position/key.csv、compare_results/mf_position/labels_rater_adjudicated.csv、eval_<模型>_a_center.csv"])
+    base = ROOT / "compare_results" / "mf_position"
+    path = base / "labels_rater_adjudicated.csv"
+    if not path.exists():
+        print(f"[略過] 找不到 {path}")
+        s.finish()
+        return
+    with open(ROOT / "mf_position" / "key.csv", newline="") as f:
+        key = {r["alias"]: r for r in csv.DictReader(f)}
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        lab = {r["alias"]: r for r in csv.DictReader(f) if key.get(r["alias"], {}).get("set") == "test"}
+    evals = {}
+    for m in ("r34_imagenet_aug", "yolo26s-seg"):
+        p = base / f"eval_{m}_a_center.csv"
+        if p.exists():
+            with open(p, newline="") as f:
+                evals[m] = {r["alias"]: r["pred"] for r in csv.DictReader(f)}
+    # 2026-11-05: 自動 ROI(第一階段裁切、存讀兩次 JPEG)的牙位,e2e_eval.py --jpeg --name e2e_axisv2
+    auto_roi = {}
+    e2e = ROOT / "compare_results" / "e2e_axisv2_jpeg" / "per_roi.csv"
+    if e2e.exists():
+        stem2alias = {r["stem"]: a for a, r in key.items()}
+        with open(e2e, newline="") as f:
+            for r in csv.DictReader(f):
+                if r["stem"] in stem2alias:
+                    auto_roi.setdefault(r["model"], {})[stem2alias[r["stem"]]] = r["auto_pos"]
+    group = lambda r: "FDI 錯" if r["fdi_wrong"] == "1" else ("缺牙" if r["position"] == "M" else ("正常牙" if r["position"] in list("123456") else "其他"))
+    def rows(first):
+        out = []
+        for g in ("正常牙", "缺牙", "FDI 錯"):
+            items = [a for a, r in lab.items() if group(r) == g]
+            row = [g, len(items)]
+            if g == "正常牙":
+                row += [sum(key[a]["auto_position_center"] == lab[a]["position"] for a in items) / len(items),
+                        sum(lab[a]["original"] == lab[a]["position"] and key[a]["auto_position_center"] == lab[a]["position"] for a in items) / len(items)]
+                for m in ("r34_imagenet_aug", "yolo26s-seg"):
+                    e = [a for a in items if a in evals.get(m, {})]
+                    row.append(sum(evals[m][a] == lab[a]["position"] for a in e) / len(e) if e else None)
+                e = [a for a in items if a in evals.get("r34_imagenet_aug", {})]
+                row.append(sum(evals["r34_imagenet_aug"][a] == lab[a]["original"] for a in e) / len(e) if e else None)
+                for m in ("r34_imagenet_aug", "yolo26s-seg"):
+                    e = [a for a in items if a in auto_roi.get(m, {})]
+                    row.append(sum(auto_roi[m][a] == lab[a]["position"] for a in e) / len(e) if e else None)
+            else:
+                row += [None] * 7
+            out.append(row)
+        return out
+    s.table("各分組的正確率", ["分組", "個數", "規則 vs 複查後標註", "規則 vs 原始標註", "自動流程 U-Net", "自動流程 YOLO26s",
+             "自動流程 U-Net vs 原始標註", "自動 ROI U-Net", "自動 ROI YOLO26s"], rows,
+            [None, None, PCT, PCT, PCT, PCT, PCT, PCT, PCT],
+            note="自動流程 = 五折多數決(種子 0)預測的頦孔 + 同一規則,人工 ROI;沒有預測算錯。自動 ROI = 第一階段裁切、存讀兩次 JPEG(e2e_axisv2_jpeg)。除「vs 原始標註」兩欄外都對複查後標註。缺牙與 FDI 錯規則仍會輸出答案,但沒有正確答案,需要偵測後轉介")
+    s.finish()
+
+
 def pano(wb):
     # 2026-10-28: 新切分(全景片層級,kfold_pano.py)的結果。之前的工作表都是舊的病人層級切分(kfold_patient)
     s = Sheet(wb, "新切分_主結果", "新切分(病人 ∪ 來源全景片,301 組)的結果",
@@ -710,7 +769,7 @@ def appendix(wb):
 def main():
     wb = Workbook()
     wb.remove(wb.active)
-    for build in (overview, pano, pano_more, pano_rerun, seeds,diff_ci, details, ablation, learning, batches, agreement, visibility, preprocessing, others, evidence, appendix):
+    for build in (overview, pano, pano_more, pano_rerun, tooth_position, seeds,diff_ci, details, ablation, learning, batches, agreement, visibility, preprocessing, others, evidence, appendix):
         build(wb)
     # 開啟時重新計算所有公式
     wb.calculation.fullCalcOnLoad = True
