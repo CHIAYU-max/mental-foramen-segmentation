@@ -153,63 +153,67 @@ def compute():
 
 
 def learning_curve():
-    s = Svg(860, 372, "More labels would add little", "Foramen Dice by training size, five-fold mean, seed 0. Earlier patient-level split", "Learning curve")
-    s.legend(24, 74, [("Cross-validation", "a"), ("Test set", "b")])
-    x, y = panel(s, 68, 100, 760, 214, (90, 470), (.55, .75), [113, 225, 336, 447], [.55, .6, .65, .7, .75], lambda t: f"{t}", lambda t: f"{t:.2f}")
-    cv = [(113, .651), (225, .676), (336, .699), (447, .701)]
-    test = [(113, .591), (225, .638), (336, .666), (447, .670)]
+    s = Svg(860, 372, "The hit rate levels off at about three quarters of the data",
+            "Foramen hit rate, three seeds, lcc. 75% to 100%: CV +0.1 points (p = 0.91), test +1.2 (p = 0.23)", "Learning curve")
+    s.legend(24, 74, [("Test set, five-fold vote", "b"), ("Cross-validation", "a")])
+    x, y = panel(s, 68, 100, 760, 214, (90, 470), (80, 95), [112, 224, 335, 447], [80, 85, 90, 95], lambda t: f"{t}", lambda t: f"{t}%")
+    cv = [(112, 81.9), (224, 85.6), (335, 86.5), (447, 86.6)]
+    test = [(112, 85.4), (224, 90.5), (335, 92.2), (447, 93.4)]
     series(s, x, y, test, "b")
     series(s, x, y, cv, "a")
-    s.text(x(447), y(.701) - 11, "0.701", "t small", "middle")
-    s.text(x(447), y(.670) + 21, "0.670", "t small", "middle")
-    s.text(448, 356, "Training ROIs", "s small", "middle")
+    s.text(x(447), y(93.4) - 11, "93.4%", "t small", "middle")
+    s.text(x(447), y(86.6) + 21, "86.6%", "t small", "middle")
+    s.text(448, 356, "Training ROIs per fold (25%, 50%, 75%, 100% of the training groups)", "s small", "middle")
     s.save("learning_curve")
 
 
 def preprocessing():
-    rows = [("CLAHE", (.0115, -.0023, .0262), (.0104, -.0121, .0353)), ("Gamma", (.0073, -.0075, .0218), (-.0080, -.0312, .0133)),
-            ("Gaussian", (.0057, -.0067, .0183), (-.0026, -.0232, .0196)), ("Unsharp mask", (.0006, -.0137, .0148), (-.0022, -.0237, .0177)),
-            ("Median", (.0003, -.0126, .0125), (-.0039, -.0215, .0157)), ("Bilateral", (.0000, -.0134, .0134), (-.0078, -.0305, .0170)),
-            ("BF + gamma + CLAHE + UM", (-.0131, -.0275, .0011), (-.0224, -.0569, .0109)), ("Laplacian", (-.0142, -.0285, -.0004), (-.0051, -.0215, .0117)),
-            ("Histogram equalization", (-.0203, -.0369, -.0053), (-.0251, -.0461, -.0032))]
-    height = 118 + len(rows) * 32 + 42
-    s = Svg(860, height, "No preprocessing method beat the original image", "Foramen Dice difference from the original image, 95% CI, seed 0. Earlier patient-level split. Grey band: ±0.02", "Preprocessing forest plot")
-    s.legend(24, 74, [("Cross-validation", "a"), ("Test set", "b")])
+    rows = [("Hit rate (points)", (-0.18, -1.58, 1.22), (-1.46, -4.29, 1.17)),
+            ("Foramen Dice (x100)", (-0.55, -1.41, 0.32), (-0.64, -3.08, 1.60)),
+            ("Canal Dice (x100)", (-0.64, -1.21, -0.07), (-0.93, -1.71, -0.20))]
+    height = 118 + len(rows) * 40 + 42
+    s = Svg(860, height, "CLAHE did not beat the light unsharp mask",
+            "CLAHE minus unsharp mask, three seeds, lcc, 95% CI. Only the canal Dice gap is significant", "Preprocessing comparison")
+    s.legend(24, 74, [("Cross-validation", "a"), ("Test set, five-fold vote", "b")])
     left, right, top = 210, 830, 96
-    bottom = top + len(rows) * 32
-    x = lambda v: left + (v + .06) / .1 * (right - left)
-    s.parts.append(f'<rect x="{x(-.02):.1f}" y="{top}" width="{x(.02) - x(-.02):.1f}" height="{bottom - top}" class="c tint"/>')
-    for t in (-.06, -.04, -.02, 0, .02, .04):
+    bottom = top + len(rows) * 40
+    lo, hi = -5, 2
+    x = lambda v: left + (v - lo) / (hi - lo) * (right - left)
+    for t in range(lo, hi + 1):
         s.line(x(t), top, x(t), bottom, "axis" if t == 0 else "grid")
-        s.text(x(t), bottom + 19, f"{t:+.2f}" if t else "0", "s small", "middle")
+        s.text(x(t), bottom + 19, f"{t:+d}" if t else "0", "s small", "middle")
     for i, (name, cv, test) in enumerate(rows):
-        cy = top + i * 32 + 16
+        cy = top + i * 40 + 20
         s.text(left - 12, cy + 4, name, "t small", "end")
-        for (mid, low, high), group, dy in ((cv, "a", -5), (test, "b", 6)):
+        for (mid, low, high), group, dy in ((cv, "a", -6), (test, "b", 7)):
             s.line(x(low), cy + dy, x(high), cy + dy, f"{group} line", 2, 'stroke-linecap="round"')
             s.dot(x(mid), cy + dy, group, 4)
-    s.text((left + right) / 2, bottom + 40, "Foramen Dice difference from the original image", "s small", "middle")
+    s.text((left + right) / 2, bottom + 40, "Difference, CLAHE minus unsharp mask (negative = CLAHE worse)", "s small", "middle")
     s.save("preprocessing")
 
 
 def ablation():
-    rows = [("Final model", .701, .689), ("Without pretraining", .694, .690), ("Without strong augmentation", .675, .680), ("Plain U-Net, strong aug.", .628, .542), ("Plain U-Net, basic aug.", .551, .469)]
-    s = Svg(860, 118 + len(rows) * 46 + 34, "The ResNet34 encoder and strong augmentation matter most", "Foramen Dice, seed 0. Earlier patient-level split", "Ablation results")
+    rows = [("Final model", 86.7, 93.0, "5 seeds"), ("Without ImageNet pretraining", 86.6, 90.8, "5 seeds"),
+            ("Without strong augmentation", 84.4, 90.5, "5 seeds"), ("Plain U-Net, strong aug.", 82.3, 82.5, "seed 0"),
+            ("Plain U-Net, basic aug.", 79.4, 83.2, "seed 0")]
+    s = Svg(860, 118 + len(rows) * 40 + 40, "Strong augmentation and the ResNet34 encoder matter most",
+            "Foramen hit rate, lcc. Pretraining leaves the hit rate unchanged but raises the Dice", "Ablation results")
     s.legend(24, 74, [("Cross-validation", "a"), ("Test set, five-fold vote", "b")])
-    left, right, top = 210, 800, 96
-    bottom = top + len(rows) * 46
-    x = lambda v: left + v / .8 * (right - left)
-    for t in (0, .2, .4, .6, .8):
-        s.line(x(t), top, x(t), bottom, "axis" if t == 0 else "grid")
-        s.text(x(t), bottom + 19, f"{t:.1f}", "s small", "middle")
-    for i, (name, cv, test) in enumerate(rows):
-        y0 = top + i * 46 + 7
-        s.text(left - 12, y0 + 19, name, "t small", "end")
-        for j, (value, group) in enumerate(((cv, "a"), (test, "b"))):
-            y1 = y0 + j * 16
-            width = x(value) - left
-            s.parts.append(f'<path d="M{left},{y1}h{width - 4:.1f}a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4h{-(width - 4):.1f}z" class="{group} fill"/>')
-            s.text(x(value) + 6, y1 + 11, f"{value:.3f}", "s small")
+    left, right, top = 250, 800, 96
+    bottom = top + len(rows) * 40
+    lo, hi = 75, 95
+    x = lambda v: left + (v - lo) / (hi - lo) * (right - left)
+    for t in range(lo, hi + 1, 5):
+        s.line(x(t), top, x(t), bottom, "grid")
+        s.text(x(t), bottom + 19, f"{t}%", "s small", "middle")
+    for i, (name, cv, test, seeds) in enumerate(rows):
+        cy = top + i * 40 + 20
+        s.text(left - 12, cy + 4, f"{name} ({seeds})", "t small", "end")
+        s.line(x(min(cv, test)), cy, x(max(cv, test)), cy, "edge", 1)
+        for value, group in ((cv, "a"), (test, "b")):
+            s.dot(x(value), cy, group, 5)
+        s.text(x(max(cv, test)) + 9, cy + 4, f"{cv:.1f} / {test:.1f}", "s small")
+    s.text((left + right) / 2, bottom + 40, "Foramen hit rate (CV / test)", "s small", "middle")
     s.save("ablation")
 
 

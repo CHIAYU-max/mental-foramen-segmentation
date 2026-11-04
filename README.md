@@ -43,6 +43,12 @@ five-fold pixel-wise majority vote, keeping only the largest connected foramen r
   precise (`analysis/hit_threshold.py`).
 - Accuracy is limited by how visible the foramen is: on images graded as visible, Dice reaches 0.84, above the
   annotator's own repeat agreement (0.79) (`analysis/pano_visibility.py`).
+- Strong augmentation matters most: without it the cross-validation hit rate drops 2.3 points (95% CI 0.9–3.7, p = 0.001) and both
+  Dice scores drop. ImageNet pretraining leaves the hit rate unchanged (p = 0.83) but raises the canal Dice by about 0.02. The hit rate
+  levels off at about 75% of the training data (75% to 100%: +0.1 points in cross-validation, p = 0.91), and CLAHE does not beat the light
+  unsharp mask.
+- A manual review found 8 same-patient pairs (different visits) across cross-validation folds and none between the test set and training.
+  Excluding them keeps the U-Net lead at +3.2 to +3.5 points (p ≤ 0.0004).
 - Disagreement among models trained with different seeds flags uncertain cases without labels: referring the 10%
   most uncertain ROIs to a clinician raises the hit rate on the rest from 87.8% to 94.0% in cross-validation (gain
   95% CI 4.6–8.2 points) and from 92.7% to 97.6% on the test set (gain 95% CI 1.4–7.8 points; five seeds pooled into one
@@ -67,15 +73,16 @@ New split, five seeds, lcc.
 
 ![Test hit rate against compute for four strategies](docs/figures/compute_tradeoff.svg)
 
-### Earlier experiments
+### Design choices, re-run on the new split
 
-These ran on the earlier patient-level split with one seed, so their values are not comparable with the table above. The conclusions are what carry over.
+The ablation, learning curve and preprocessing comparison were first run on an earlier patient-level split with one seed. They were re-run on the
+current split with three to five seeds and lcc (`stage2/kfold_pano.py --unet-config / --train-frac / --variant`), so they compare directly with the table above.
 
-![Foramen Dice of the ablation variants](docs/figures/ablation.svg)
+![Foramen hit rate of the ablation variants](docs/figures/ablation.svg)
 
-![Foramen Dice by number of training ROIs](docs/figures/learning_curve.svg)
+![Foramen hit rate by number of training ROIs](docs/figures/learning_curve.svg)
 
-![Foramen Dice difference of nine preprocessing methods](docs/figures/preprocessing.svg)
+![CLAHE minus unsharp mask, with confidence intervals](docs/figures/preprocessing.svg)
 
 ### Hardware analysis
 
@@ -102,6 +109,8 @@ Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency acr
 | `analysis/pano_visibility.py`, `analysis/pano_uncertainty.py`, `analysis/uncertainty_ci.py` | Visibility-stratified results; model disagreement as an uncertainty score, with confidence intervals |
 | `stage1/stage1_eval.py`, `stage1/stage1_failures.py`, `analysis/e2e_eval.py` | Stage-1 validation and the end-to-end comparison with manual ROIs |
 | `position/mf_position.py`, `position/mf_position_eval.py`, `position/position_server.py` | Tooth-position rule, its evaluation, and a browser labeling tool |
+| `position/mf_axis_v2.py` | Comparison of the current tooth-axis lines (each premolar's own root axis, the first molar's two root axes averaged) with the earlier version |
+| `data/make_clahe_dataset.py`, `data/find_same_patient_cv.py` | CLAHE dataset for the preprocessing re-run; same-patient candidates across folds |
 | `deployment/roofline_profile.py`, `deployment/pipeline_timing.py`, `deployment/int8_quant.py`, `deployment/single_small_lcc.py` | Performance analysis, INT8 quantization and a small single model |
 | `deployment/roofline_workload.py`, `deployment/accel_model.py` | Workload characterization and a first-order analytical model of an INT8 accelerator |
 | `stage2/unet_tta.py`, `stage2/pseudo_label.py`, `stage2/kfold_pseudo.py` | Flip test-time augmentation and semi-supervised training, neither adopted |

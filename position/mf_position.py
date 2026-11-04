@@ -20,7 +20,7 @@ from stage1.stage1_eval import MF_CLASS, MIN_GAP, MIN_SCORE, TEST_LABELS, TRAIN_
 #   3 x4 與 x5 之間                4 x5 下方(x5 長軸穿過頦孔)
 #   5 x5 與 x6 之間                6 第一大臼齒(x6)下方
 #   x = 象限 3(病人左側,影像右側)或 4(病人右側,影像左側)。
-# 長軸: 牙齒實例遮罩像素的主成分(PCA),方向朝下;只用牙根(下半部),x6 用整顆牙(2026-10-28 起,細節見 reference_lines)。
+# 長軸: 牙齒實例遮罩像素的主成分(PCA),方向朝下;只用牙根(下半部);2026-11-04 起 v2: x6 兩根分別算再平均(細節見 reference_lines_v2)。
 # 判定(頦孔用多邊形輪廓,不只看中心點):
 #   某條參考線穿過頦孔輪廓 → 該牙下方(2 / 4 / 6);同時穿過多條時取離頦孔質心最近的那條。
 #   都沒穿過 → 依質心落在哪兩條參考線之間(1 / 3 / 5);在 x6 近心根遠心側也算 6。
@@ -35,7 +35,13 @@ KEY_CSV = OUT / "key.csv"
 ITEMS_JSON = OUT / "items.json"
 REPORT_DIR = ROOT / "compare_results" / "mf_position"
 MAX_AXIS_DIFF = 15.0  # 度;與相鄰牙的長軸方向差超過此值就改用相鄰牙的方向
-X6_AXIS = "whole"  # x6 的參考線: "whole" 整顆牙(2026-10-28 使用者決定)/ "mesial" 近心根(2026-10-25 版)
+X6_AXIS = "whole"  # x6 的參考線: "whole" 整顆牙(2026-10-28 使用者決定)/ "mesial" 近心根(2026-10-25 版);只用於 AXIS_VERSION = "v1"
+# 2026-11-04 參考線 v2(使用者看過疊圖後決定採用,比較見 mf_axis_v2.py 與 EXPERIMENTS.md「參考線改版 v2」):
+#   v1 的保險「與相鄰牙差 > 15° 就換方向」會把真的傾斜的小臼齒換掉(x5 24%),x6 兩根一起算主成分常接近水平(83% 被換掉)。
+#   v2: 小臼齒用自己的牙根長軸,只在遮罩不可靠時借用相鄰牙;x6 兩個牙根分別算長軸再平均。"v1" 保留做對照。
+AXIS_VERSION = "v2"
+ELONG_MIN = 1.5  # v2: 牙根像素的細長度 sqrt(λ1/λ2) 低於此值視為遮罩不可靠
+MAX_DIFF_V2 = 35.0  # v2: 與相鄰牙方向差超過此值視為明顯錯誤
 DEDUP_PX = 15  # 同一側兩個 GT 頦孔質心距離小於此值視為同一個(同一個 ROI 出現在不同批次)
 CROP_DISTAL, CROP_MESIAL, CROP_UP, CROP_DOWN = 450, 100, 600, 250
 FULL_WIDTH = 1220
@@ -94,7 +100,83 @@ def reference_lines_perp(lower, quadrant):
     return lines
 
 
+def elongation(pts):
+    lam = np.linalg.eigvalsh(np.cov((pts - pts.mean(axis=0)).T))
+    return float(np.sqrt(lam[-1] / max(lam[0], 1e-9)))
+
+
+def root_axis(pts, c0=None, v0=None):
+    # 牙根 = 以 (c0, v0)(預設為整顆牙的主成分)切出的下半部;回傳 (中心, 方向, 細長度),像素太少時回傳 None
+    if c0 is None:
+        c0, v0 = principal(pts)
+    root = pts[(pts - c0) @ v0 > 0]
+    if len(root) < 20:
+        return None
+    c, v = principal(root)
+    return c, v, elongation(root)
+
+
+def reference_lines_v2(lower, quadrant, notes=None):
+    # 2026-11-04 v2(門檻事先固定,mf_axis_v2.py 與這裡相同):
+    #   小臼齒: 一律用自己的牙根主成分;牙根像素 < 20 或細長度 < ELONG_MIN 時借用相鄰牙的方向;
+    #           兩顆差 > MAX_DIFF_V2 時換掉細長度較低的那一顆。
+    #   x6: 用 x4 / x5 平均方向切成近心 / 遠心兩半,兩根各自算長軸(細長度 ≥ ELONG_MIN、與平均方向差 ≤ MAX_DIFF_V2 才用)、取平均方向,
+    #       線通過下半部(牙根)像素的中心;沒有可靠的根或結果與 x5 差 > MAX_DIFF_V2 時改用 x5 的方向。
+    #   notes 記錄觸發的保險: <牙>_unreliable(細長度)、<牙>_diff(角度)、6_one_root、6_no_root
+    notes = {} if notes is None else notes
+    by_fdi = {t["fdi_id"]: t for t in lower if "fdi_id" in t}
+    pts = {k: tooth_pixels(by_fdi[f"{quadrant}{k}"]) for k in "456" if f"{quadrant}{k}" in by_fdi}
+    axes, elong = {}, {}
+    for k in "45":
+        if k in pts:
+            r = root_axis(pts[k])
+            axes[k], elong[k] = (principal(pts[k]), 0.0) if r is None else (r[:2], r[2])
+    for k, nb in (("4", "5"), ("5", "4")):
+        if k in axes and nb in axes and elong[k] < ELONG_MIN <= elong[nb]:
+            notes[f"{k}_unreliable"] = round(elong[k], 2)
+            axes[k] = (axes[k][0], axes[nb][1])
+    if "4" in axes and "5" in axes and angle(axes["4"][1], axes["5"][1]) > MAX_DIFF_V2:
+        bad, good = ("4", "5") if elong["4"] < elong["5"] else ("5", "4")
+        notes[f"{bad}_diff"] = round(angle(axes["4"][1], axes["5"][1]), 1)
+        axes[bad] = (axes[bad][0], axes[good][1])
+    if "6" in pts:
+        ref = [axes[k][1] for k in "45" if k in axes]
+        r = np.mean(ref, axis=0) if ref else np.array([0.0, 1.0])
+        r = r / np.linalg.norm(r)
+        n = distal_normal(r, quadrant)
+        p6 = pts["6"]
+        c0 = p6.mean(axis=0)
+        rel = p6 - c0
+        roots = []
+        for side in (rel @ n < 0, rel @ n >= 0):  # 近心根、遠心根
+            half = p6[side]
+            ra = root_axis(half, half.mean(axis=0), r) if len(half) >= 20 else None
+            if ra is not None and ra[2] >= ELONG_MIN and angle(ra[1], r) <= MAX_DIFF_V2:
+                roots.append(ra)
+        root_px = p6[rel @ r > 0]
+        center = root_px.mean(axis=0) if len(root_px) >= 20 else c0
+        if roots:
+            v = np.mean([ra[1] if ra[1][1] >= 0 else -ra[1] for ra in roots], axis=0)
+            v = v / np.linalg.norm(v)
+            if len(roots) == 1:
+                notes["6_one_root"] = 1
+        else:
+            v = r
+            notes["6_no_root"] = 1
+        if "5" in axes and angle(v, axes["5"][1]) > MAX_DIFF_V2:
+            notes["6_diff"] = round(angle(v, axes["5"][1]), 1)
+            v = axes["5"][1]
+        axes["6"] = (center, v)
+    return {k: (c, v, distal_normal(v, quadrant)) for k, (c, v) in sorted(axes.items())}
+
+
 def reference_lines(lower, quadrant, notes=None):
+    if AXIS_VERSION == "v2":
+        return reference_lines_v2(lower, quadrant, notes)
+    return reference_lines_v1(lower, quadrant, notes)
+
+
+def reference_lines_v1(lower, quadrant, notes=None):
     # {"4"/"5"/"6": (線上一點, 方向, 指向遠心的法向量)};法向量決定有號距離的正負: 正 = 遠心側
     # 2026-10-25 改版(使用者發現 36 的參考線太斜;全部 614 個 x6 參考線與垂直夾角中位數 27°、最斜的 5% 超過 49°):
     #   小臼齒: 先用整顆牙的主成分定出上下,再只取下半部(牙根)重算主成分,避開牙冠形狀與咬合面的影響。
@@ -267,7 +349,7 @@ def prepare(args):
                          "auto_position_center": position_center or "", "auto_position_perp_center": position_perp_center or "",
                          "reason": info.get("reason", ""),
                          **{f"d{k}": info.get(f"d{k}", "") for k in "456"},
-                         "axis_fallback": " ".join(f"{k[4]}:{v}" for k, v in notes.items()),
+                         "axis_fallback": " ".join(f"{k[4]}:{v}" if k.startswith("axis") else f"{k}:{v}" for k, v in notes.items()),
                          "mf_x": round(m[0], 1), "mf_y": round(m[1], 1), "crop_x": x1, "crop_y": y1})
         if i % 20 == 0 or i == len(panos):
             print(f"[{i}/{len(panos)}] {pano}")
@@ -282,7 +364,7 @@ def prepare(args):
 
 def kappas(a, b):
     from sklearn.metrics import cohen_kappa_score
-    pairs = [(x, y) for x, y in zip(a, b) if x in "123456" and y in "123456"]
+    pairs = [(x, y) for x, y in zip(a, b) if x in list("123456") and y in list("123456")]
     if len(pairs) < 2:
         return len(pairs), float("nan"), float("nan"), float("nan")
     x, y = (list(map(int, v)) for v in zip(*pairs))

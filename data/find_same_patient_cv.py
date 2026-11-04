@@ -1,3 +1,4 @@
+import argparse
 import csv
 import sys
 
@@ -14,9 +15,15 @@ from stage2.kfold_pano import PROJECT
 #   最壞情況: 把前 REVIEW_PAIRS 組牽涉到的 ROI 全部排除,看 U-Net 與 YOLO26s 的 CV 命中(種子 0、lcc)變多少。
 SPLIT_DIR = ROOT / "compare_results" / PROJECT
 REVIEW_DIR = OUT_DIR / "review_cv"
+# 2026-11-04 --more 0.95: 補看相似度 >= 0.95 但還沒判讀的配對(當初在 GPU 上算為 111 組,前 40 組已判讀)。
+#   CPU 與 GPU 的特徵有微小差異,排名會變動,所以以「配對」排除 candidates_cv.csv 已判讀的組,不依賴排名;
+#   輸出另存 candidates_cv_more.csv 與 review_cv/more_<序號>_<相似度>.jpg,不覆寫已判讀的檔案。
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--more", type=float, default=None, metavar="MIN_SIM", help="輸出相似度 >= MIN_SIM、且不在 candidates_cv.csv 的配對")
+    args = parser.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
     with open(SPLIT_DIR / "folds.csv", newline="") as f:
         folds = list(csv.DictReader(f))
@@ -53,15 +60,28 @@ def main():
     print(f"不同折的配對 {len(pairs)} 組;相似度 >= 0.99 {int((values >= 0.99).sum())}、>= 0.97 {int((values >= 0.97).sum())}、>= 0.95 {int((values >= 0.95).sum())}")
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    with open(OUT_DIR / "candidates_cv.csv", "w", newline="", encoding="utf-8-sig") as f:
+    selected, prefix, out_csv = list(enumerate(pairs[:REVIEW_PAIRS], start=1)), "", OUT_DIR / "candidates_cv.csv"
+    if args.more is not None:
+        with open(out_csv, newline="", encoding="utf-8-sig") as f:
+            reviewed = {frozenset((r["pano_a"], r["pano_b"])) for r in csv.DictReader(f)}
+        top = {frozenset((a, b)) for _, a, b in pairs[: len(reviewed)]}
+        above = [p for p in pairs if p[0] >= args.more]
+        print(f"已判讀 {len(reviewed)} 組;其中 {len(reviewed & top)} 組仍在這次的前 {len(reviewed)} 名,"
+              f"{len(reviewed & {frozenset((a, b)) for _, a, b in above})} 組相似度 >= {args.more}")
+        selected = list(enumerate([p for p in above if frozenset(p[1:]) not in reviewed], start=1))
+        prefix, out_csv = "more_", OUT_DIR / "candidates_cv_more.csv"
+        if out_csv.exists():
+            raise SystemExit(f"{out_csv} 已存在,不覆寫")
+    with open(out_csv, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow(["rank", "similarity", "pano_a", "folds_a", "pano_b", "folds_b", "image", "same_person(y/n/unsure)"])
-        for rank, (s, a, b) in enumerate(pairs[:REVIEW_PAIRS], start=1):
-            name = f"{rank:03d}_{s:.3f}.jpg"
-            title = f"#{rank}  similarity {s:.3f}  left: {panos[a]['path'].name} (fold {sorted(panos[a]['folds'])})   right: {panos[b]['path'].name} (fold {sorted(panos[b]['folds'])})"
+        for rank, (s, a, b) in selected:
+            name = f"{prefix}{rank:03d}_{s:.3f}.jpg"
+            title = f"#{prefix}{rank}  similarity {s:.3f}  left: {panos[a]['path'].name} (fold {sorted(panos[a]['folds'])})   right: {panos[b]['path'].name} (fold {sorted(panos[b]['folds'])})"
             cv2.imwrite(str(REVIEW_DIR / name), side_by_side(panos[a]["path"], panos[b]["path"], title))
             writer.writerow([rank, round(s, 4), a, sorted(panos[a]["folds"]), b, sorted(panos[b]["folds"]), name, ""])
 
+    print(f"輸出 {len(selected)} 組(相似度 {selected[0][1][0]:.4f}–{selected[-1][1][0]:.4f})→ {out_csv}")
     affected = {stem for _, a, b in pairs[:REVIEW_PAIRS] for key in (a, b) for stem in panos[key]["stems"]}
     with open(SPLIT_DIR / "per_roi_lcc.csv", newline="") as f:
         rows = [r for r in csv.DictReader(f) if r["setting"] == "cv"]

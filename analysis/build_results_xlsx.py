@@ -84,23 +84,24 @@ def overview(wb):
         ("指標", "Dice、IoU、容許 2/4 像素邊界誤差的 Dice、HD95、ASSD;頦孔定位:命中率 = 預測中心落在 GT 等效半徑 R 以內的比例"),
         ("信賴區間", "以病人為單位重抽樣 2000 次的 95% 區間(種子 0)"),
         ("注意", "沒有像素間距,距離以像素或 R 的倍數表示;兩批全景片解析度不一致,以 R 為單位的指標較可比"),
-        ("尚未完成", "同一病人不同時期影像的人工確認(find_same_patient.py)"),
+        ("同一病人確認", "2026-11-04 人工確認: 測試 × 訓練最相似 40 組都不是同一人;CV 前 40 組有 8 組跨折同一人(不同時期),排除後結論不變;其餘 70 組待判讀"),
     ]
     s.table("研究設定", ["項目", "內容"], lambda first: rows)
     sheets = [
         ("新切分_主結果", "新切分: 七個模型、U-Net 與 YOLO26s 五個種子、合併種子的病人層級檢定(論文主表;以 lcc 版本為準)"),
-        ("新切分_延伸", "新切分(lcc): 困難案例、可辨識性分層、串接式推論、R34/384、推論時翻轉、半監督"),
+        ("新切分_延伸", "新切分(lcc): 困難案例、可辨識性分層、串接式推論與輸出方式、R34/384、推論時翻轉、半監督、瘦 decoder、端到端、量化、自動 ROI估計"),
+        ("新切分_舊實驗重跑", "新切分(lcc): 消融、學習曲線、CLAHE 前處理重跑(取代舊切分的三張工作表的結論)"),
         ("新切分_運算量", "新切分: U-Net encoder 與輸入尺寸的精度對運算量(三個種子)"),
         ("主要結果_種子","最終 U-Net 與 YOLO 在三個隨機種子下的結果,平均、標準差與差距以公式計算"),
         ("差值CI", "U-Net − YOLO 差值的 95% 信賴區間(各種子、三種子平均、依可辨識性分組)"),
         ("詳細指標", "種子 0 的完整指標與 95% 信賴區間"),
-        ("消融實驗", "結構、預訓練、增強各自的貢獻"),
-        ("學習曲線", "訓練資料量 25%–100% 的表現"),
+        ("消融實驗", "(舊切分)結構、預訓練、增強各自的貢獻;新切分版見「新切分_舊實驗重跑」"),
+        ("學習曲線", "(舊切分)訓練資料量 25%–100% 的表現;新切分版見「新切分_舊實驗重跑」"),
         ("批次分析", "兩批資料的差距、交叉批次實驗、標註特徵、頦孔暗度分組"),
         ("標註一致性", "40 張重新標註的結果"),
         ("其他實驗", "推論規則、候選挑選、模型大小、設計變體、切分方式、前處理"),
         ("可辨識性", "頦孔可辨識的比例,以及依可辨識性分層的結果"),
-        ("前處理", "9 種前處理與原圖的比較(強增強與無增強)"),
+        ("前處理", "(舊切分)9 種前處理與原圖的比較;注意其中的 unsharp_mask 是 amount 1.0,不是主流程的 strength 0.5 / threshold 3"),
         ("可信度", "各實驗的可信度分級(A/B/C)與限制"),
         ("附錄_*", "結果 CSV 的原始內容"),
     ]
@@ -403,7 +404,7 @@ def read_rows(name):
 def pano_more(wb):
     # 2026-10-30: 10/28–29 在新切分上的延伸實驗(都是 lcc 後)
     s = Sheet(wb, "新切分_延伸", "新切分的延伸實驗(頦孔一律 lcc)",
-              ["困難案例、可辨識性、串接式推論、解析度 384、推論時翻轉、半監督;數字讀各程式的輸出 CSV,平均與標準差用公式"])
+              ["困難案例、可辨識性、串接式推論、解析度 384、推論時翻轉、半監督、瘦 decoder、端到端、量化、自動 ROI;數字讀各程式的輸出 CSV,平均與標準差用公式"])
     unc = read_rows("uncertainty_summary_lcc.csv")
     s.table("以模型分歧標出困難案例(U-Net 五個種子)",
             ["集合", "ROI", "沒命中", "AUROC u→沒命中", "AUROC u→無法辨識", "命中 @100%", "@95%", "@90%", "@80%"],
@@ -467,6 +468,78 @@ def pano_more(wb):
     s.table("R18/384 單一模型對五折多數決(測試集)", ["項目", "命中或差", "標準差", "mf Dice", "CI 下", "CI 上", "p"],
             lambda first: [[r["row"]] + [float(r[k]) if r[k] else None for k in ("hit", "hit_sd", "mf_dice", "ci_low", "ci_high", "p")] for r in single],
             [None, D4, D4, D4, D4, D4, D4], note="單一模型用全部 559 張訓練,種子 0–4;取代舊的「90.3%、少 2.3 點」。來源: single_small_lcc.py")
+
+    # 2026-10-31: 串接式輸出方式、瘦 decoder、端到端、量化、自動 ROI估計
+    output = read_rows("cascade_output.csv")
+    if output:
+        s.table("串接式停下時的輸出方式(測試 137 張、5 種子)", ["輸出", "命中", "mf Dice", "ian Dice"],
+                lambda first: [[label] + [sum(float(r[f"{key}_{m}"]) for r in output) / len(output) for m in ("hit", "dice", "ian")]
+                               for key, label in (("full", "五折多數決"), ("intersection", "交集(現行)"), ("union", "聯集"), ("first", "第一個模型"))],
+                [None, D4, D4, D4], note="探索性比較,未定案;等牙位標註後再比。來源: cascade_output.py → cascade_output.csv")
+    slim = read_rows("slim_eval_summary_s01234.csv")
+    s.table("瘦 decoder slim+half − R34/512 主結果(合併五個種子,lcc)", ["集合", "指標", "主結果", "瘦", "差", "CI 下", "CI 上", "p", "ROI", "得", "失"],
+            lambda first: [[r["setting"], r["metric"]] + [float(r[k]) for k in ("base", "slim", "diff", "ci_low", "ci_high", "p")]
+                           + [int(r["n"]), int(r["gain"]) if r["gain"] else None, int(r["lost"]) if r["lost"] else None] for r in slim],
+            [None, None, D4, D4, D4, D4, D4, D4, None, None, None],
+            note="通道 128-64-32-32、輸出頭 1/2 解析度,24.13 GMAC(原本 40.9)。test cascade 兩者都是先 2 折、tau 0.5、交集。來源: slim_eval.py → slim_eval_summary_s01234.csv")
+    e2e = [r for r in read_rows("../roofline/accel_e2e/table.csv") if r["stage1"] == "YOLOv8s" and r["rois"] == "2.0" and r["array"] == "64"]
+    s.table("端到端估計(第一階段 YOLOv8s、2 個 ROI、64×64)", ["策略", "decoder", "測試命中", "GMAC", "相對運算", "第一階段佔比", "加速器 ms", "加 CPU ms"],
+            lambda first: [[r["policy"], r["decoder"], float(r["test_hit"]) if r["test_hit"] else None]
+                           + [float(r[k]) for k in ("gmac", "gmac_rel", "stage1_gmac_share", "accel_ms", "with_host_ms")] for r in e2e],
+            [None, None, D4, "0.0", "0.00", PCT, "0", "0"], note="一階解析模型,不是 RTL。空白 = 精度未量。來源: accel_e2e.py → roofline/accel_e2e/table.csv")
+    for name, title, note in (("int8", "OpenVINO PTQ − FP32", "舊的少 2.2 點是種子 0 的 3 張、沒有 lcc,由這張取代。"),
+                              ("ptq", "torch.ao PTQ − FP32", "與 OpenVINO PTQ 不能互換。"),
+                              ("qat", "QAT − FP32", "CV 也是選 epoch 用的集合。"),
+                              ("qat_vs_ptq", "QAT − torch.ao PTQ", ""),
+                              ("fixed", "定點 − QAT", "16 位元乘數、32 位元累加器;只換卷積與加法,只跑測試集。"),
+                              ("fixed_vs_fp32", "定點 − FP32", "只跑測試集。")):
+        rows = read_rows(f"../int8_pano/slim_eval_{name}_summary_s01234.csv")
+        s.table(f"量化: {title}(合併五個種子,lcc)", ["集合", "指標", "基準", "比較", "差", "CI 下", "CI 上", "p", "ROI", "得", "失"],
+                lambda first, rows=rows: [[r["setting"], r["metric"]] + [float(r[k]) for k in ("base", "slim", "diff", "ci_low", "ci_high", "p")]
+                                          + [int(r["n"]), int(r["gain"]) if r["gain"] else None, int(r["lost"]) if r["lost"] else None] for r in rows],
+                [None, None, D4, D4, D4, D4, D4, D4, None, None, None], note=f"{note}來源: int8_seeds.py / qat_fx.py → int8_pano/slim_eval_{name}_summary_s01234.csv")
+    e2e_rows = read_rows("../e2e_seeds/summary_s01234.csv")
+    s.table("自動 ROI 五種子重算(lcc)", ["基準", "比較", "指標", "基準值", "比較值", "差", "CI 下", "CI 上", "p", "ROI", "得", "失"],
+            lambda first: [[r["base"], r["other"], r["metric"]] + [float(r[k]) for k in ("base_mean", "other_mean", "diff", "ci_low", "ci_high", "p")]
+                           + [int(r["n"]), int(r["gain"]), int(r["lost"])] for r in e2e_rows],
+            [None, None, None, D4, D4, D4, D4, D4, D4, None, None, None],
+            note="manual = 人工 ROI;auto_jpeg = 自動 ROI 存讀兩次 JPEG;auto_mem = 自動 ROI 記憶體內。測試 ROI 本來就是第一階段裁的,不代表第一階段沒有損失。來源: e2e_seeds.py → e2e_seeds/summary_s01234.csv")
+    s.finish()
+
+
+def pano_rerun(wb):
+    # 2026-11-04: 舊實驗(消融、學習曲線、前處理)在新切分上重跑(run_rerun_old.sh),頦孔一律 lcc
+    s = Sheet(wb, "新切分_舊實驗重跑", "消融、學習曲線、前處理在新切分上重跑(頦孔一律 lcc)",
+              ["取代「消融實驗」「學習曲線」「前處理」三張舊切分工作表的結論;差 = 主結果(r34_imagenet_aug)− 變體,同種子配對、合併種子、以組為單位",
+               "來源: kfold_pano.py --unet-config / --train-frac / --variant、mf_postproc.py、pano_stats.py --post lcc、seed_bootstrap.py --post lcc"])
+    post = read_postproc()
+    seeds5 = ["種子 0", "種子 1", "種子 2", "種子 3", "種子 4", "平均", "標準差"]
+    for metric, mlabel in (("mf_hit_1R", "mf 命中 1R"), ("mf_dice", "mf Dice")):
+        for tag, name in (("r34_imagenet_aug", "主結果(預訓練 + 強增強)"), ("r34_scratch_aug", "拿掉 ImageNet 預訓練"), ("r34_imagenet", "拿掉強增強")):
+            s.table(f"消融 {name}: {mlabel}", ["設定"] + seeds5, lambda first, tag=tag, metric=metric: seed_rows(post, tag, range(5), metric),
+                    [None] + [D4] * 7)
+    s.table("消融: 原本的 U-Net(只跑種子 0,差距遠大於種子變異)", ["模型", "設定", "mf 命中 1R", "mf Dice"],
+            lambda first: [[name, label] + [float(post.get((tag, setting), {}).get(k) or "nan") for k in ("mf_hit_1R", "mf_dice")]
+                           for tag, name in (("unet_scratch", "原本的 U-Net"), ("scratch_aug", "原本的 U-Net + 強增強"))
+                           for setting, label in PANO_SETTINGS],
+            [None, None, D4, D4], note="種子 0 的逐張檢定見 stats_abl_lcc.csv")
+    bootstrap_table(s, "seed_bootstrap_r34_scratch_aug_s01234_lcc.csv", "主結果 − 拿掉預訓練(合併五個種子)",
+                    "預訓練不影響命中,提高 ian Dice 與測試 mf Dice。來源: seed_bootstrap.py --post lcc --prefix _abl --other r34_scratch_aug")
+    bootstrap_table(s, "seed_bootstrap_r34_imagenet_s01234_lcc.csv", "主結果 − 拿掉強增強(合併五個種子)",
+                    "強增強對命中與 Dice 都有幫助。來源: seed_bootstrap.py --post lcc --prefix _abl --other r34_imagenet")
+    seeds3 = ["種子 0", "種子 1", "種子 2", "平均", "標準差"]
+    for metric, mlabel in (("mf_hit_1R", "mf 命中 1R"), ("mf_dice", "mf Dice")):
+        for tag, name in (("r34_imagenet_aug_frac25", "25%"), ("r34_imagenet_aug_frac50", "50%"), ("r34_imagenet_aug_frac75", "75%"), ("r34_imagenet_aug", "100%(主結果)")):
+            s.table(f"學習曲線 {name}: {mlabel}", ["設定"] + seeds3, lambda first, tag=tag, metric=metric: seed_rows(post, tag, range(3), metric),
+                    [None] + [D4] * 5)
+    for frac in (25, 50, 75):
+        bootstrap_table(s, f"seed_bootstrap_r34_imagenet_aug_frac{frac}_s012_lcc.csv", f"學習曲線: 100% − {frac}%(合併三個種子)",
+                        "每折只用部分訓練組(子集隨種子改變,25 ⊂ 50 ⊂ 75),epochs 依比例放大。來源: seed_bootstrap.py --post lcc --prefix _lc")
+    for metric, mlabel in (("mf_hit_1R", "mf 命中 1R"), ("mf_dice", "mf Dice")):
+        s.table(f"前處理 CLAHE(取代 unsharp mask): {mlabel}", ["設定"] + seeds3,
+                lambda first, metric=metric: seed_rows(post, "r34_imagenet_aug_clahe", range(3), metric), [None] + [D4] * 5)
+    bootstrap_table(s, "seed_bootstrap_r34_imagenet_aug_clahe_s012_lcc.csv", "unsharp mask(主結果)− CLAHE(合併三個種子)",
+                    "CLAHE clipLimit 2.0、8×8,套在原圖;命中與 mf Dice 無差異,ian Dice 小幅較差。來源: seed_bootstrap.py --post lcc --prefix _clahe")
     s.finish()
 
 
@@ -637,7 +710,7 @@ def appendix(wb):
 def main():
     wb = Workbook()
     wb.remove(wb.active)
-    for build in (overview, pano, pano_more, seeds,diff_ci, details, ablation, learning, batches, agreement, visibility, preprocessing, others, evidence, appendix):
+    for build in (overview, pano, pano_more, pano_rerun, seeds,diff_ci, details, ablation, learning, batches, agreement, visibility, preprocessing, others, evidence, appendix):
         build(wb)
     # 開啟時重新計算所有公式
     wb.calculation.fullCalcOnLoad = True

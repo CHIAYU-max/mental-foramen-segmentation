@@ -40,6 +40,12 @@ CONFIGS = {
     "r18_imagenet_aug": dict(arch="resnet18", pretrained=True, aug="strong", size=(512, 512), lr=3e-4),
     "r34_imagenet_aug_384": dict(arch="resnet34", pretrained=True, aug="strong", size=(384, 384), lr=3e-4),
     "r18_imagenet_aug_384": dict(arch="resnet18", pretrained=True, aug="strong", size=(384, 384), lr=3e-4),
+    # 2026-10-31 瘦 decoder(accel_e2e.py 的 slim+half): 通道減半,輸出頭放在 1/2 解析度再放大,其餘與 r34_imagenet_aug 相同
+    "r34_imagenet_aug_slimhalf": dict(arch="resnet34", pretrained=True, aug="strong", size=(512, 512), lr=3e-4,
+                                      decoder=[128, 64, 32, 32], half_head=True),
+    # 2026-11-03 在新切分上重跑消融(原本在 ablation_patient.py,病人層級切分): 設定與 ablation_patient.ABLATIONS 相同
+    "unet_scratch": dict(arch="unet", pretrained=False, aug="basic", size=(512, 512), lr=1e-3),
+    "r34_scratch_aug": dict(arch="resnet34", pretrained=False, aug="strong", size=(512, 512), lr=1e-3),
 }
 BASE_TAG = "unet_scratch"
 ENCODER_CHANNELS = {"resnet18": [64, 64, 128, 256, 512], "resnet34": [64, 64, 128, 256, 512], "resnet50": [64, 256, 512, 1024, 2048]}
@@ -50,8 +56,9 @@ WEIGHTS_DIR = OUT_DIR / "weights"
 
 
 class ResNetUNet(nn.Module):
-    def __init__(self, arch, pretrained, num_classes):
+    def __init__(self, arch, pretrained, num_classes, decoder=DECODER_CHANNELS, half_head=False):
         super().__init__()
+        self.half_head = half_head
         net = getattr(torchvision.models, arch)(weights="IMAGENET1K_V1" if pretrained else None)
         self.stem = nn.Sequential(net.conv1, net.bn1, net.relu)
         self.pool = net.maxpool
@@ -63,10 +70,13 @@ class ResNetUNet(nn.Module):
         skips = ENCODER_CHANNELS[arch][::-1]
         self.decoders = nn.ModuleList()
         c_in = skips[0]
-        for c_skip, c_out in zip(skips[1:], DECODER_CHANNELS):
+        for c_skip, c_out in zip(skips[1:], decoder):
             self.decoders.append(DoubleConv(c_in + c_skip, c_out, c_out, bias=False))
             c_in = c_out
-        self.head = nn.Sequential(DoubleConv(c_in, 32, 32, bias=False), nn.Conv2d(32, num_classes, 1))
+        if half_head:
+            self.head = nn.Conv2d(c_in, num_classes, 1)
+        else:
+            self.head = nn.Sequential(DoubleConv(c_in, 32, 32, bias=False), nn.Conv2d(32, num_classes, 1))
 
     def forward(self, x):
         size = x.shape[-2:]
@@ -81,13 +91,15 @@ class ResNetUNet(nn.Module):
             skip = features.pop()
             x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
             x = decoder(torch.cat([x, skip], dim=1))
+        if self.half_head:
+            return F.interpolate(self.head(x), size=size, mode="bilinear", align_corners=False)
         return self.head(F.interpolate(x, size=size, mode="bilinear", align_corners=False))
 
 
 def build_model(config):
     if config["arch"] == "unet":
         return UNet(len(NAMES) + 1)
-    return ResNetUNet(config["arch"], config["pretrained"], len(NAMES) + 1)
+    return ResNetUNet(config["arch"], config["pretrained"], len(NAMES) + 1, config.get("decoder", DECODER_CHANNELS), config.get("half_head", False))
 
 
 @torch.inference_mode()

@@ -1,6 +1,7 @@
 import argparse
 import csv
 import gc
+import math
 import random
 import statistics
 import sys
@@ -45,10 +46,67 @@ SUMMARY_SUFFIX = ""
 # 訓練種子(2026-10-26 多種子重複): 與 SEED 不同時,U-Net 與 YOLO 的輸出名稱、彙總檔名都加 _s<種子>;切分仍用 SPLIT_SEED,不會改變
 TRAIN_SEED = SEED
 SEED_SUFFIX = ""
+# 2026-11-03 舊實驗在新切分上重跑(只用於 U-Net,預設值與主結果相同):
+#   --train-frac: 學習曲線。每一折只用部分訓練「組」(病人 ∪ 來源全景片);組的順序依 (種子, 折) 打亂,
+#                 25 ⊂ 50 ⊂ 75 為巢狀子集;epochs 依比例放大(100 × 100 / 比例),總更新步數與完整資料相同(與 learning_curve.py 相同)。
+#   --variant:    換一組前處理的影像(訓練、驗證、測試都換),標註與 GT 不變。
+TRAIN_FRAC = 100
+VARIANT = ""
+VARIANTS = {
+    # mf_559_original 與測試原圖(dental_project/20261008/test)套 CLAHE(clipLimit 2.0、8×8,同 kfold_preprocessing.py),取代 unsharp mask
+    "clahe": dict(dataset="datasets/20261103/mf_559_clahe", test="runs/gt/images/clahe_test"),
+}
+EXTRA_SUFFIX = ""
+# U-Net 訓練與推論讀的切分清單所在的資料夾(預設就是 out_dir;--train-frac / --variant 時為 out_dir/subsets/<tag>)
+DATA_DIR = None
 
 
 def tag_of(model):
-    return (UNET_CONFIG if model == UNET else Path(model).stem + TAG_SUFFIX) + SEED_SUFFIX
+    return (UNET_CONFIG + EXTRA_SUFFIX if model == UNET else Path(model).stem + TAG_SUFFIX) + SEED_SUFFIX
+
+
+def prepare_lists(out_dir):
+    # 寫出 --train-frac / --variant 用的切分清單;驗證折與測試集不變(只換成 variant 的影像路徑)
+    if not EXTRA_SUFFIX:
+        return out_dir
+    base = out_dir / "subsets" / tag_of(UNET)
+    yaml_dir = base / "yaml"
+    yaml_dir.mkdir(parents=True, exist_ok=True)
+    main_root = (ROOT / DATASET).resolve()
+    var_root = (ROOT / VARIANTS[VARIANT]["dataset"]).resolve() if VARIANT else None
+
+    def remap(p):
+        if not var_root:
+            return p
+        q = var_root / p.relative_to(main_root)
+        if not q.exists():
+            raise SystemExit(f"{VARIANT} 缺少影像 {q}")
+        return q
+
+    with open(out_dir / "folds.csv", newline="") as f:
+        group = {r["stem"]: r["group"] for r in csv.DictReader(f)}
+    for fold in range(K_FOLDS):
+        train_paths = fold_paths(fold, "train", out_dir)
+        if TRAIN_FRAC < 100:
+            groups = sorted({group[p.stem] for p in train_paths}, key=int)
+            random.Random(1000 * TRAIN_SEED + fold).shuffle(groups)
+            keep = set(groups[: math.ceil(len(groups) * TRAIN_FRAC / 100)])
+            train_paths = [p for p in train_paths if group[p.stem] in keep]
+        (yaml_dir / f"fold{fold}_train.txt").write_text("".join(f"{remap(p)}\n" for p in train_paths))
+        (yaml_dir / f"fold{fold}_val.txt").write_text("".join(f"{remap(p)}\n" for p in fold_paths(fold, "val", out_dir)))
+        print(f"  {tag_of(UNET)} fold{fold}: 訓練 {len(train_paths)} 張")
+    return base
+
+
+def variant_test_paths(test_images):
+    if not VARIANT:
+        return list(test_images.values())
+    test_dir = (ROOT / VARIANTS[VARIANT]["test"]).resolve()
+    paths = [test_dir / p.name for p in test_images.values()]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        raise SystemExit(f"{VARIANT} 測試影像缺 {len(missing)} 張(前5: {missing[:5]})")
+    return paths
 
 
 def yolo_dir(project, tag, fold):
@@ -145,7 +203,8 @@ def build_folds(images, out_dir, test_images):
 
 def train_fold(model, fold, args, out_dir):
     if model == UNET:
-        train(tag_of(UNET), CONFIGS[UNET_CONFIG], fold, args.epochs or UNET_ARGS["epochs"], out_dir, out_dir / "weights", seed=TRAIN_SEED)
+        epochs = args.epochs or round(UNET_ARGS["epochs"] * 100 / TRAIN_FRAC)
+        train(tag_of(UNET), CONFIGS[UNET_CONFIG], fold, epochs, DATA_DIR or out_dir, out_dir / "weights", seed=TRAIN_SEED)
         return
     tag = tag_of(model)
     yolo = YOLO(model)
@@ -162,7 +221,7 @@ def train_fold(model, fold, args, out_dir):
 def predict_fold(model, fold, project, out_dir, test_paths):
     # 預測遮罩存成位元旗標圖(與 kfold_patient.py 相同),之後的指標都從遮罩計算
     tag = tag_of(model)
-    sets = (("cv", out_dir / "yaml" / f"fold{fold}_val.txt", fold_paths(fold, "val", out_dir)), ("test", out_dir / "yaml" / "test.txt", test_paths))
+    sets = (("cv", out_dir / "yaml" / f"fold{fold}_val.txt", fold_paths(fold, "val", DATA_DIR or out_dir)), ("test", out_dir / "yaml" / "test.txt", test_paths))
     if model == UNET:
         unet = build_model({**CONFIGS[UNET_CONFIG], "pretrained": False}).to(DEVICE)
         unet.load_state_dict(torch.load(out_dir / "weights" / f"{tag}_fold{fold}.pth", map_location=DEVICE)["model_state_dict"])
@@ -221,14 +280,20 @@ def main():
     parser.add_argument("--eval-only", action="store_true", help="不訓練,只用已訓練好的折評分")
     parser.add_argument("--unet-config", default=UNET_TAG, choices=list(CONFIGS), help="U-Net 的設定,預設與主結果相同")
     parser.add_argument("--seed", type=int, default=SEED, help=f"訓練種子,預設 {SEED}(主結果);切分不受影響")
+    parser.add_argument("--train-frac", type=int, default=100, choices=[25, 50, 75, 100], help="學習曲線: 只用這個比例的訓練組(只限 U-Net)")
+    parser.add_argument("--variant", default="", choices=["", *VARIANTS], help="換前處理的影像(只限 U-Net)")
     args = parser.parse_args()
-    global TAG_SUFFIX, UNET_CONFIG, SUMMARY_SUFFIX, TRAIN_SEED, SEED_SUFFIX
+    global TAG_SUFFIX, UNET_CONFIG, SUMMARY_SUFFIX, TRAIN_SEED, SEED_SUFFIX, TRAIN_FRAC, VARIANT, EXTRA_SUFFIX, DATA_DIR
+    TRAIN_FRAC, VARIANT = args.train_frac, args.variant
+    EXTRA_SUFFIX = (f"_frac{TRAIN_FRAC}" if TRAIN_FRAC < 100 else "") + (f"_{VARIANT}" if VARIANT else "")
+    if EXTRA_SUFFIX and args.models != [UNET]:
+        raise SystemExit("--train-frac / --variant 只支援 --models unet")
     if args.batch and args.batch != YOLO_ARGS["batch"]:
         TAG_SUFFIX = f"_b{args.batch}"
     UNET_CONFIG = args.unet_config
     TRAIN_SEED = args.seed
     SEED_SUFFIX = f"_s{TRAIN_SEED}" if TRAIN_SEED != SEED else ""
-    SUMMARY_SUFFIX = TAG_SUFFIX + (f"_{UNET_CONFIG}" if UNET_CONFIG != UNET_TAG else "") + SEED_SUFFIX
+    SUMMARY_SUFFIX = TAG_SUFFIX + (f"_{UNET_CONFIG}" if UNET_CONFIG != UNET_TAG else "") + EXTRA_SUFFIX + SEED_SUFFIX
 
     # 輸出導向檔案時預設會整塊緩衝,改成逐行寫出才能即時看到進度
     sys.stdout.reconfigure(line_buffering=True)
@@ -237,6 +302,8 @@ def main():
 
     test_images = {s: p for s, p in index_files((ROOT / IMAGES_DIR).resolve()).items() if s not in EXCLUDE_TEST}
     build_folds(collect_images((ROOT / DATASET).resolve()), out_dir, test_images)
+    DATA_DIR = prepare_lists(out_dir)
+    test_paths = variant_test_paths(test_images)
     if args.check_only:
         return
 
@@ -267,7 +334,7 @@ def main():
             print(f"[略過] {tag_of(model)}: 沒有訓練完成的折")
             continue
         for fold in folds:
-            predict_fold(model, fold, args.project, out_dir, list(test_images.values()))
+            predict_fold(model, fold, args.project, out_dir, test_paths)
         summary += evaluate(tag_of(model), folds, out_dir, test)
         gc.collect()
         torch.cuda.empty_cache()
