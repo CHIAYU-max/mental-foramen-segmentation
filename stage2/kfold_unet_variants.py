@@ -43,9 +43,20 @@ CONFIGS = {
     # 2026-10-31 瘦 decoder(accel_e2e.py 的 slim+half): 通道減半,輸出頭放在 1/2 解析度再放大,其餘與 r34_imagenet_aug 相同
     "r34_imagenet_aug_slimhalf": dict(arch="resnet34", pretrained=True, aug="strong", size=(512, 512), lr=3e-4,
                                       decoder=[128, 64, 32, 32], half_head=True),
+    # 2026-11-14 泛化(robust_stress.py: 現行模型對雜訊最敏感;quality 版本擋得住雜訊但原分布測試命中少 2.9 點):
+    #   只加雜訊增強(每張以機率 0.5 加高斯雜訊 sd 0–0.03),看能不能保住原分布的命中又不怕雜訊
+    "r34_imagenet_aug_noise": dict(arch="resnet34", pretrained=True, aug="strong", size=(512, 512), lr=3e-4, quality=0.5, quality_only="noise"),
+    # 2026-11-14 精確度 × 運算量(使用者要求): 瘦 decoder + 輸入 384(約 13.6 GMAC,主結果的 1/3),其餘與 r34_imagenet_aug_slimhalf 相同
+    "r34_imagenet_aug_slimhalf_384": dict(arch="resnet34", pretrained=True, aug="strong", size=(384, 384), lr=3e-4,
+                                          decoder=[128, 64, 32, 32], half_head=True),
     # 2026-11-03 在新切分上重跑消融(原本在 ablation_patient.py,病人層級切分): 設定與 ablation_patient.ABLATIONS 相同
     "unet_scratch": dict(arch="unet", pretrained=False, aug="basic", size=(512, 512), lr=1e-3),
     "r34_scratch_aug": dict(arch="resnet34", pretrained=False, aug="strong", size=(512, 512), lr=1e-3),
+    # 2026-11-05 針對低畫質(quality_errors.py: 沒命中與低對比、偏亮、頦孔 CNR 低有關;第二批命中 74.7%):
+    #   quality = 每張以此機率再做 gamma 0.6–1.6、對比壓縮 0.5–1、高斯模糊 sigma 0–1.5 px、高斯雜訊 0–0.03(參數事先固定)
+    #   oversample = 依檔名批次加權抽樣(每個 epoch 抽樣數不變,只改比例)
+    "r34_imagenet_aug_quality": dict(arch="resnet34", pretrained=True, aug="strong", size=(512, 512), lr=3e-4, quality=0.5),
+    "r34_imagenet_aug_hard2": dict(arch="resnet34", pretrained=True, aug="strong", size=(512, 512), lr=3e-4, oversample={"second": 2.0}),
 }
 BASE_TAG = "unet_scratch"
 ENCODER_CHANNELS = {"resnet18": [64, 64, 128, 256, 512], "resnet34": [64, 64, 128, 256, 512], "resnet50": [64, 256, 512, 1024, 2048]}
@@ -156,6 +167,26 @@ def jpeg_augment(x, prob, q_min, q_max):
     return out
 
 
+def quality_augment(x, prob, only=None):
+    # 2026-11-05: 模擬低畫質。每張以機率 prob 依序做 gamma、對比壓縮、模糊、雜訊(x 為 0–1)
+    out = x.clone()
+    for i in torch.nonzero(torch.rand(len(x)) < prob).flatten().tolist():
+        img = out[i : i + 1].float()
+        if only == "noise":  # 2026-11-14: 只加雜訊
+            out[i : i + 1] = (img + torch.randn_like(img) * 0.03 * torch.rand(1).item()).clamp(0, 1).to(out.dtype)
+            continue
+        img = img.clamp(1e-4, 1) ** math.exp(math.log(0.6) + torch.rand(1).item() * (math.log(1.6) - math.log(0.6)))
+        mean = img.mean()
+        img = (img - mean) * (0.5 + 0.5 * torch.rand(1).item()) + mean
+        sigma = 1.5 * torch.rand(1).item()
+        if sigma > 0.3:
+            k = int(2 * math.ceil(3 * sigma) + 1)
+            img = torchvision.transforms.functional.gaussian_blur(img, [k, k], [sigma, sigma])
+        img = img + torch.randn_like(img) * 0.03 * torch.rand(1).item()
+        out[i : i + 1] = img.clamp(0, 1).to(out.dtype)
+    return out
+
+
 def val_dice(model, samples, size):
     model.eval()
     scores = []
@@ -186,7 +217,10 @@ def train(name, config, fold, epochs, base_dir=BASE_DIR, weights_dir=None, seed=
     # extra: 額外加進訓練集的影像(2026-10-28 半監督訓練的假標註,kfold_pseudo.py);標註讀影像上一層的 labels/
     weights_dir = weights_dir or WEIGHTS_DIR
     torch.manual_seed(seed)
-    train_x, train_y = to_tensors(load_samples(fold_paths(fold, "train", base_dir) + list(extra or [])), config["size"])
+    train_paths = fold_paths(fold, "train", base_dir) + list(extra or [])
+    train_x, train_y = to_tensors(load_samples(train_paths), config["size"])
+    # 2026-11-05: oversample 設定時依檔名批次加權抽樣(預設設定不受影響)
+    sample_w = torch.tensor([config["oversample"].get(Path(q).stem.split("_")[0], 1.0) for q in train_paths]) if config.get("oversample") else None
     val_samples = load_samples(fold_paths(fold, "val", base_dir))
 
     model = build_model(config).to(DEVICE)
@@ -200,7 +234,7 @@ def train(name, config, fold, epochs, base_dir=BASE_DIR, weights_dir=None, seed=
     best_dice = -1.0
     for epoch in range(1, epochs + 1):
         model.train()
-        order = torch.randperm(len(train_x))
+        order = torch.multinomial(sample_w, len(train_x), replacement=True) if sample_w is not None else torch.randperm(len(train_x))
         losses = []
         for i in range(0, len(order), UNET_ARGS["batch"]):
             idx = order[i : i + UNET_ARGS["batch"]]
@@ -209,6 +243,8 @@ def train(name, config, fold, epochs, base_dir=BASE_DIR, weights_dir=None, seed=
             x, y = augment(train_x[idx].to(DEVICE), train_y[idx].to(DEVICE), config["aug"] == "strong")
             if config.get("jpeg"):
                 x = jpeg_augment(x, *config["jpeg"])
+            if config.get("quality"):
+                x = quality_augment(x, config["quality"], config.get("quality_only"))
             with torch.autocast(DEVICE, enabled=use_amp):
                 logits = model(x)
                 loss = F.cross_entropy(logits, y) + dice_loss(logits, y)

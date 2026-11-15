@@ -94,10 +94,10 @@ def pipeline():
     s.box(564, 74, 272, 74, "FDI numbering", ["Filtering, jaw split, tooth numbers", "stage1/fdi_numbering.py"])
     s.box(564, 182, 272, 74, "ROI crop and unsharp mask", ["Teeth 34–36 and 44–46", "data/mf_unsharp_mask.py"])
     s.box(254, 182, 270, 74, "Stage 2: segmentation", ["U-Net with ResNet34 encoder, 512 × 512", "stage2/kfold_unet_variants.py"], "a")
-    s.box(24, 182, 190, 74, "Five-fold vote", ["Pixel-wise majority", "stage2/kfold_pano.py"])
+    s.box(24, 182, 190, 74, "Five-fold ensemble", ["Vote; deployed as INT8 cascade", "deployment/deploy_pipeline.py"])
     s.box(24, 290, 190, 74, "Largest region (lcc)", ["One foramen per ROI", "stage2/mf_postproc.py"])
     s.box(254, 290, 270, 74, "Foramen and tooth position", ["Centroid, canal mask, FDI tooth position", "position/mf_position.py"], "b")
-    s.box(564, 290, 272, 74, "Clinician review", ["Model disagreement flags uncertain cases", "analysis/pano_uncertainty.py"])
+    s.box(564, 290, 272, 74, "Clinician review", ["Numbering flags, boundary margin", "position/position_referral.py"])
     s.arrow(214, 111, 254, 111)
     s.arrow(524, 111, 564, 111)
     s.arrow(700, 148, 700, 182)
@@ -251,8 +251,110 @@ def accelerator():
     s.save("accelerator_model")
 
 
+def hbars(s, rows, left, right, top, lo, hi, ticks, fmt, row_h=34):
+    """Horizontal bars: rows = (label, value, group, note). Returns the bottom y."""
+    x = lambda v: left + (v - lo) / (hi - lo) * (right - left)
+    bottom = top + len(rows) * row_h
+    for t in ticks:
+        s.line(x(t), top, x(t), bottom, "grid")
+        s.text(x(t), bottom + 19, fmt(t), "s small", "middle")
+    for i, (name, value, group, note) in enumerate(rows):
+        cy = top + i * row_h + row_h / 2
+        s.text(left - 12, cy + 4, name, "t small", "end")
+        s.parts.append(f'<rect x="{x(lo):.1f}" y="{cy - 9:.1f}" width="{x(value) - x(lo):.1f}" height="18" rx="3" class="{group} fill"/>')
+        s.text(x(value) + 8, cy + 4, note, "s small")
+    return bottom
+
+
+def system_referral():
+    # 測試集 131 側(正常牙 102、缺牙 21、FDI 錯 8),5 種子平均,原始標註;
+    # 不轉介 = position_referral P0;另兩列 = deploy_pipeline 的 score_t32_640 與 score_official
+    rows = [("No referral", 70.7, 27.3, 2.0), ("Numbering and side-count flags", 58.8, 9.9, 31.3), ("+ boundary-margin referral (deployed)", 54.7, 6.4, 38.9)]
+    s = Svg(860, 268, "Referral trades clinician workload for fewer silent errors",
+            "All 131 test sides including missing teeth and wrong numbering, five seeds, original labels", "Share of sides answered correctly, answered wrongly, or referred")
+    s.legend(24, 74, [("Answered correctly", "a"), ("Answered wrongly (silent error)", "b"), ("Referred to a clinician", "c")])
+    left, right, top = 290, 830, 96
+    x = lambda v: left + v / 100 * (right - left)
+    for t in (0, 25, 50, 75, 100):
+        s.line(x(t), top, x(t), top + len(rows) * 40, "grid")
+        s.text(x(t), top + len(rows) * 40 + 19, f"{t}%", "s small", "middle")
+    for i, (name, ok, bad, ref) in enumerate(rows):
+        cy = top + i * 40 + 20
+        s.text(left - 12, cy + 4, name, "t small", "end")
+        start = 0
+        for value, group in ((ok, "a"), (bad, "b"), (ref, "c")):
+            s.parts.append(f'<rect x="{x(start):.1f}" y="{cy - 11:.1f}" width="{x(start + value) - x(start):.1f}" height="22" class="{group} fill"/>')
+            if value >= 6:
+                s.parts.append(f'<text x="{x(start + value / 2):.1f}" y="{cy + 4:.1f}" text-anchor="middle" style="fill:#fff;font-size:12px">{value:.1f}%</text>')
+            start += value
+    s.text((left + right) / 2, top + len(rows) * 40 + 40, "Share of all test sides", "s small", "middle")
+    s.save("system_referral")
+
+
+def low_bit():
+    # CV 命中差(點)與 95% CI;判準 = 不掉超過約 1 點(事先定)。EXPERIMENTS.md「硬體: 結構化稀疏與 4-bit」
+    rows = [("W4A8 QAT vs INT8 (seed 0)", (0.00, -1.27, 1.30)), ("W4A4 QAT vs INT8 (seed 0)", (-6.08, -8.95, -3.30)),
+            ("2:4 sparse FP32 vs FP32 (seed 0)", (0.54, -0.56, 1.73)), ("2:4 + INT8 vs dense INT8 (5 seeds)", (0.50, -0.15, 1.16)),
+            ("2:4 + W4A8 vs dense INT8 (seed 0)", (-1.07, -2.72, 0.55)), ("2:4 fixed point vs integer (5 seeds)", (0.04, -0.19, 0.27))]
+    height = 118 + len(rows) * 36 + 44
+    s = Svg(860, height, "INT8 with 2:4 sparsity keeps the hit rate; 4-bit activations do not",
+            "Cross-validation hit rate difference, 95% CI. Dashed: the pre-set margin of about −1 point", "Hit rate change for low-bit and sparse U-Nets")
+    left, right, top = 300, 830, 80
+    bottom = top + len(rows) * 36
+    lo, hi = -10, 3
+    x = lambda v: left + (v - lo) / (hi - lo) * (right - left)
+    for t in range(lo, hi + 1, 2):
+        s.line(x(t), top, x(t), bottom, "grid")
+        s.text(x(t), bottom + 19, f"{t:+d}" if t else "0", "s small", "middle")
+    s.line(x(0), top, x(0), bottom, "axis")
+    s.line(x(-1), top, x(-1), bottom, "edge", 1, 'stroke-dasharray="4 4"')
+    for i, (name, (mid, low, high)) in enumerate(rows):
+        cy = top + i * 36 + 18
+        group = "b" if high < -1 or mid < -1 else "a"
+        s.text(left - 12, cy + 4, name, "t small", "end")
+        s.line(x(low), cy, x(high), cy, f"{group} line", 2, 'stroke-linecap="round"')
+        s.dot(x(mid), cy, group, 5)
+    s.text((left + right) / 2, bottom + 40, "Hit rate difference (points); 2:4 keeps the stem and the 32→3 output layer dense", "s small", "middle")
+    s.save("low_bit")
+
+
+def deploy_latency():
+    # 筆電 i5-13500H + RTX 4050,測試集 103 張;同一時段內才比(time6: 11/15 00:53–01:42;time8: 10:41–10:49)
+    s = Svg(860, 470, "Each speed-up in the deployed pipeline, measured in one session",
+            "Laptop, mean wall-clock time per radiograph, 103 test radiographs, three rounds. Absolute times vary about ±25% across sessions", "Latency per radiograph by configuration")
+    rows1 = [("Integrated pipeline (13 Nov)", 1399, "c", "1399 ms"), ("+ 32-class model INT8, union", 1205, "c", "1205 ms"),
+             ("+ box-only mask upsampling", 1088, "c", "1088 ms"), ("+ 32-class model at 640 px", 1023, "c", "1023 ms"),
+             ("+ fast argmax (deployed)", 929, "a", "929 ms"), ("Deployed, U-Net FP32 instead of INT8", 2255, "b", "2255 ms (INT8: 2.43× faster)")]
+    s.text(24, 84, "Session 1: CPU (OpenVINO)", "t bold")
+    b = hbars(s, rows1, 300, 700, 94, 0, 2400, [0, 500, 1000, 1500, 2000], lambda t: f"{t}", 32)
+    rows2 = [("CPU, deployed (INT8)", 800, "a", "800 ms"), ("RTX 4050, U-Net FP32", 217, "b", "217 ms"), ("RTX 4050, U-Net FP16", 194, "b", "194 ms")]
+    s.text(24, b + 50, "Session 2: CPU and laptop GPU", "t bold")
+    b2 = hbars(s, rows2, 300, 700, b + 60, 0, 2400, [0, 500, 1000, 1500, 2000], lambda t: f"{t}", 32)
+    s.text(530, b2 + 40, "Milliseconds per radiograph", "s small", "middle")
+    s.save("deploy_latency")
+
+
+def cpu_scheduling():
+    # sustained_cores.ps1(11/15): 每圈 = 第一階段 FP32 ×1 + U-Net INT8 ×5,15 秒一格的第一階段中位數
+    t = [7.5 + 15 * i for i in range(12)]
+    runs = [("Default, run 1", "a", [207, 205, 213, 214, 229, 233, 233, 230, 234, 231, 231, 234]),
+            ("Default, run 3", "b", [209, 210, 216, 217, 231, 236, 241, 229, 296, 295, 294, 297]),
+            ("Threads pinned", "c", [305, 302, 312, 313, 306, 333, 320, 312, 323, 308, 323, 314])]
+    s = Svg(860, 372, "On a hybrid laptop CPU, the scheduler decides the latency",
+            "i5-13500H (4 P-cores + 8 E-cores), stage-1 model FP32, 3-minute load, same settings in every run", "Stage-1 latency over time in three runs")
+    s.legend(24, 74, [(name, g) for name, g, _ in runs])
+    x, y = panel(s, 68, 100, 760, 214, (0, 180), (180, 350), [0, 30, 60, 90, 120, 150, 180], [200, 250, 300, 350], lambda v: f"{v} s", lambda v: f"{v} ms")
+    for _, g, v in runs:
+        series(s, x, y, list(zip(t, v)), g)
+    s.text(x(178), y(199), "Run 3 after 120 s: threads move to E-cores (P use 46→38%, E 27→40%)", "t small", "end")
+    s.text(x(178), y(187), "Frequency and temperature unchanged", "s small", "end")
+    s.text(448, 356, "Time under load (15-second medians)", "s small", "middle")
+    s.save("cpu_scheduling")
+
+
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
-    for make in (pipeline, hit_threshold, referral, compute, learning_curve, preprocessing, ablation, roofline, accelerator):
+    for make in (pipeline, hit_threshold, referral, compute, learning_curve, preprocessing, ablation, roofline, accelerator,
+                 system_referral, low_bit, deploy_latency, cpu_scheduling):
         make()
     print(sorted(p.name for p in OUT.glob("*.svg")))

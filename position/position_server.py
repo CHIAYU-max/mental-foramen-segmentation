@@ -19,6 +19,17 @@ from pathlib import Path
 PORT = 8766
 FIELDS = ["alias", "position", "axes_shown", "fdi_wrong", "time"]
 CODES = list("123456MX")
+# 2026-11-14 --mode abnormal(使用者要求): 只判斷該側的牙齒是否正常,用來在非測試集開發缺牙 / FDI 錯的偵測器(不標牙位)。
+#   N 正常(x4–x6 都在、編號正確)、M 缺牙、W FDI 編號有誤、X 看不清楚;疊圖預設打開;--order-file 指定要標的代號與順序,--labels 指定存檔位置。
+ABNORMAL_CODES = list("NMWX")
+# 2026-11-14 --blind(使用者要求): 盲標。牙齒輪廓、FDI 編號、參考線都不能打開(A、E 停用),只看影像與頦孔輪廓標牙位,
+#   用來量同一人的重複一致性,以及「看著參考線標」對原本標註的影響(position_reports.py blind)。
+BLIND = False
+BLIND_NOTE = ("<b>盲標: 這一輪看不到牙齒輪廓、編號與參考線。</b>請自己辨認第一、第二小臼齒與第一大臼齒,依下面的定義判牙位;"
+              "這三顆有缺牙或無法辨認時按 M,影像不清按 X。<br><br>")
+ABNORMAL_NOTE = ("<b>這一輪只判斷牙齒是否正常,不用標牙位。</b>看綠色的編號(34、35、36 或 44、45、46)是不是對到正確的牙齒:<br>"
+                 "<b>N</b> 正常: 三顆都在、編號正確;<b>M</b> 這三顆裡有缺牙(含植體、牙橋上的假牙);"
+                 "<b>W</b> 牙齒都在但編號不對(例如乳牙、多數了一顆);<b>X</b> 看不清楚。<br>按 F 可以看整張全景片。<br><br>")
 
 PAGE = """<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8"><title>頦孔牙位標註</title>
@@ -51,7 +62,7 @@ small { color: #aaa; line-height: 1.5; }
 <button id="back">← 上一個 (B)</button><button id="next">下一個 →</button>
 <button id="t-fdi" style="grid-column: span 2">FDI 編號有誤 (E)</button>
 </div>
-<small>判定(2026-10-28 使用者決定): 沿牙根的<b>長軸(中線)往下延伸</b>畫一條線(x6 用整顆牙)。<br>
+<small>__NOTE__判定(2026-10-28 使用者決定): 沿牙根的<b>長軸(中線)往下延伸</b>畫一條線(x6 用整顆牙)。<br>
 線通過頦孔<b>中央那一半</b> → 該牙下方;只擦到邊緣、相切或沒碰到 → 依頦孔中心落在哪兩條線之間,判為兩牙之間。<br>
 參考線由模型算出,只供參考,請以影像判斷。模型判定缺牙的已自動略過;若仍看到缺牙,按 M 略過。<br>
 標完牙位後可按 A 打開疊圖,若綠色的 FDI 編號與實際牙齒不符,按 E 標記(再按一次取消)。</small>
@@ -59,9 +70,10 @@ small { color: #aaa; line-height: 1.5; }
 <script>
 const data = __DATA__, labels = __LABELS__, fdiWrong = __FDI__, order = data.order;
 const NAMES = q => ({"1": `${q}4 前方`, "2": `${q}4 下方`, "3": `${q}4–${q}5 之間`, "4": `${q}5 下方`,
-  "5": `${q}5–${q}6 之間`, "6": `${q}6 下方`, "M": "缺牙,略過", "X": "影像不清,無法判定"});
+  "5": `${q}5–${q}6 之間`, "6": `${q}6 下方`, "M": "缺牙,略過", "X": "影像不清,無法判定",
+  "N": `正常: ${q}4–${q}6 都在、編號正確`, "W": "FDI 編號有誤"});
 let i = order.findIndex(a => !(a in labels)); if (i < 0) i = order.length - 1;
-const view = { axes: false, mf: true, contrast: false, full: false };
+const view = { axes: __AXES__, mf: true, contrast: false, full: false };
 const $ = id => document.getElementById(id), cv = $("cv"), ctx = cv.getContext("2d");
 const cache = {};
 function load(src) { if (!cache[src]) { cache[src] = new Image(); cache[src].src = "/img/" + src; } return cache[src]; }
@@ -120,6 +132,7 @@ async function mark(c) {
   show();
 }
 async function flagFdi() {
+  if (BLIND) return;
   const a = order[i], value = fdiWrong[a] ? 0 : 1;
   const r = await fetch("/fdi", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ alias: a, fdi_wrong: value }) });
@@ -128,7 +141,9 @@ async function flagFdi() {
   show();
 }
 $("t-fdi").onclick = flagFdi;
-function toggle(k) { view[k] = !view[k]; show(); }
+const BLIND = __BLIND__;
+if (BLIND) { $("t-axes").style.display = "none"; $("t-fdi").style.display = "none"; }
+function toggle(k) { if (BLIND && k === "axes") return; view[k] = !view[k]; show(); }
 $("t-axes").onclick = () => toggle("axes"); $("t-mf").onclick = () => toggle("mf");
 $("t-contrast").onclick = () => toggle("contrast"); $("t-full").onclick = () => toggle("full");
 $("back").onclick = () => { if (i > 0) { i--; show(); } };
@@ -179,7 +194,10 @@ class Handler(BaseHTTPRequestHandler):
             page = (PAGE.replace("__DATA__", json.dumps(self.data, ensure_ascii=False))
                     .replace("__LABELS__", json.dumps({a: r["position"] for a, r in self.labels.items() if r["position"]}))
                     .replace("__FDI__", json.dumps({a: 1 for a, r in self.labels.items() if str(r["fdi_wrong"]) == "1"}))
-                    .replace("__CODES__", json.dumps(CODES)))
+                    .replace("__CODES__", json.dumps(CODES))
+                    .replace("__AXES__", "true" if CODES == ABNORMAL_CODES else "false")
+                    .replace("__BLIND__", "true" if BLIND else "false")
+                    .replace("__NOTE__", ABNORMAL_NOTE if CODES == ABNORMAL_CODES else BLIND_NOTE if BLIND else ""))
             self.reply(200, page.encode(), "text/html; charset=utf-8")
             return
         name = self.path[5:] if self.path.startswith("/img/") else ""
@@ -217,7 +235,15 @@ def main():
     parser.add_argument("--rater", required=True, help="標註者名稱(英數字),結果存在 labels_<rater>.csv")
     parser.add_argument("--dir", default=str(Path(__file__).resolve().parents[1] / "mf_position"))
     parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument("--mode", choices=["position", "abnormal"], default="position", help="abnormal = 只標 正常 / 缺牙 / FDI 錯(N / M / W / X)")
+    parser.add_argument("--blind", action="store_true", help="盲標: 不能打開牙齒輪廓 / 編號 / 參考線")
+    parser.add_argument("--order-file", help="只標這個檔案列出的代號(一行一個),依檔案順序")
+    parser.add_argument("--labels", help="標註存檔路徑(預設 <dir>/labels_<rater>.csv)")
     args = parser.parse_args()
+    global CODES, BLIND
+    BLIND = args.blind
+    if args.mode == "abnormal":
+        CODES = ABNORMAL_CODES
     if not args.rater.replace("_", "").isalnum():
         raise SystemExit("--rater 只能用英數字與底線")
     root = Path(args.dir)
@@ -227,8 +253,12 @@ def main():
     order = Handler.data["order"]
     Handler.data["order"] = [a for a in order if has_reference_lines(Handler.data["items"][a])]
     skipped = len(order) - len(Handler.data["order"])
+    if args.order_file:
+        ok = set(Handler.data["order"])
+        Handler.data["order"] = [a for a in Path(args.order_file).read_text().split() if a in ok]
     Handler.images = root / "images"
-    Handler.labels_path = root / f"labels_{args.rater}.csv"
+    Handler.labels_path = Path(args.labels) if args.labels else root / f"labels_{args.rater}.csv"
+    Handler.labels_path.parent.mkdir(parents=True, exist_ok=True)
     Handler.labels = load_labels(Handler.labels_path)
     total = len(Handler.data["order"])
     # 只接受本機連線;從自己的電腦連線請透過 VS Code 的連接埠轉送或 SSH 通道

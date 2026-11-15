@@ -3,10 +3,10 @@
 Layer-wise roofline profiling for the mental-foramen segmentation models.
 
 Run on the GPU server, for example:
-  python -m deployment.roofline_profile --model unet --out roofline_unet
-  python -m deployment.roofline_profile --model unet --weights compare_results/kfold_pano_mf_559/weights/r34_imagenet_aug_fold0.pth --out roofline_unet
-  python -m deployment.roofline_profile --model yolo --weights runs/segment/train/weights/best.pt --out roofline_yolo
-  python -m deployment.roofline_profile --model yolo --fuse --out roofline_yolo_fused
+  python -m hardware.roofline_profile --model unet --out roofline_unet
+  python -m hardware.roofline_profile --model unet --weights compare_results/kfold_pano_mf_559/weights/r34_imagenet_aug_fold0.pth --out roofline_unet
+  python -m hardware.roofline_profile --model yolo --weights runs/segment/train/weights/best.pt --out roofline_yolo
+  python -m hardware.roofline_profile --model yolo --fuse --out roofline_yolo_fused
 
 FLOPs and bytes depend only on the architecture and input size, not on the
 trained weights, so --weights is optional.

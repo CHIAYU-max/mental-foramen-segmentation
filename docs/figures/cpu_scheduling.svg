@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 372" role="img" aria-label="Stage-1 latency over time in three runs"><style>
+.bg{fill:#fcfcfb}.t{fill:#0b0b0b}.s{fill:#52514e}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.edge{stroke:#8a8983}
+.a{--c:#2a78d6}.b{--c:#eb6834}.c{--c:#6e6d68}
+.fill{fill:var(--c)}.line{stroke:var(--c)}.ring{stroke:#fcfcfb}.tint{fill:var(--c);fill-opacity:.12}.card{fill:#fcfcfb}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.title{font-size:16px;font-weight:600}.small{font-size:12px}.bold{font-weight:600}
+@media (prefers-color-scheme:dark){
+.bg,.card{fill:#1a1a19}.t{fill:#f0efec}.s{fill:#c3c2b7}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.edge{stroke:#8a8983}
+.a{--c:#3987e5}.b{--c:#d95926}.c{--c:#a9a89f}.ring{stroke:#1a1a19}}
+</style><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a8983"/></marker></defs><rect class="bg" width="860" height="372" rx="8"/>
+<text x="24.0" y="30.0" class="t title" text-anchor="start">On a hybrid laptop CPU, the scheduler decides the latency</text>
+<text x="24.0" y="50.0" class="s small" text-anchor="start">i5-13500H (4 P-cores + 8 E-cores), stage-1 model FP32, 3-minute load, same settings in every run</text>
+<rect x="24" y="64" width="11" height="11" rx="2" class="a fill"/>
+<text x="40.0" y="74.0" class="s small" text-anchor="start">Default, run 1</text>
+<rect x="146" y="64" width="11" height="11" rx="2" class="b fill"/>
+<text x="162.0" y="74.0" class="s small" text-anchor="start">Default, run 3</text>
+<rect x="268" y="64" width="11" height="11" rx="2" class="c fill"/>
+<text x="284.0" y="74.0" class="s small" text-anchor="start">Threads pinned</text>
+<line x1="68.0" y1="288.8" x2="828.0" y2="288.8" class="grid" stroke-width="1" />
+<text x="60.0" y="292.8" class="s small" text-anchor="end">200 ms</text>
+<line x1="68.0" y1="225.9" x2="828.0" y2="225.9" class="grid" stroke-width="1" />
+<text x="60.0" y="229.9" class="s small" text-anchor="end">250 ms</text>
+<line x1="68.0" y1="162.9" x2="828.0" y2="162.9" class="grid" stroke-width="1" />
+<text x="60.0" y="166.9" class="s small" text-anchor="end">300 ms</text>
+<line x1="68.0" y1="100.0" x2="828.0" y2="100.0" class="grid" stroke-width="1" />
+<text x="60.0" y="104.0" class="s small" text-anchor="end">350 ms</text>
+<text x="68.0" y="333.0" class="s small" text-anchor="middle">0 s</text>
+<text x="194.7" y="333.0" class="s small" text-anchor="middle">30 s</text>
+<text x="321.3" y="333.0" class="s small" text-anchor="middle">60 s</text>
+<text x="448.0" y="333.0" class="s small" text-anchor="middle">90 s</text>
+<text x="574.7" y="333.0" class="s small" text-anchor="middle">120 s</text>
+<text x="701.3" y="333.0" class="s small" text-anchor="middle">150 s</text>
+<text x="828.0" y="333.0" class="s small" text-anchor="middle">180 s</text>
+<line x1="68.0" y1="314.0" x2="828.0" y2="314.0" class="axis" stroke-width="1" />
+<path d="M99.7,280.0L163.0,282.5L226.3,272.5L289.7,271.2L353.0,252.3L416.3,247.3L479.7,247.3L543.0,251.1L606.3,246.0L669.7,249.8L733.0,249.8L796.3,246.0" class="a line" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+<circle cx="99.7" cy="280.0" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="163.0" cy="282.5" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="226.3" cy="272.5" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="289.7" cy="271.2" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="353.0" cy="252.3" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="416.3" cy="247.3" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="479.7" cy="247.3" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="543.0" cy="251.1" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="606.3" cy="246.0" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="669.7" cy="249.8" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="733.0" cy="249.8" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="796.3" cy="246.0" r="5" class="a fill ring" stroke-width="2"/>
+<path d="M99.7,277.5L163.0,276.2L226.3,268.7L289.7,267.4L353.0,249.8L416.3,243.5L479.7,237.2L543.0,252.3L606.3,168.0L669.7,169.2L733.0,170.5L796.3,166.7" class="b line" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+<circle cx="99.7" cy="277.5" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="163.0" cy="276.2" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="226.3" cy="268.7" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="289.7" cy="267.4" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="353.0" cy="249.8" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="416.3" cy="243.5" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="479.7" cy="237.2" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="543.0" cy="252.3" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="606.3" cy="168.0" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="669.7" cy="169.2" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="733.0" cy="170.5" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="796.3" cy="166.7" r="5" class="b fill ring" stroke-width="2"/>
+<path d="M99.7,156.6L163.0,160.4L226.3,147.8L289.7,146.6L353.0,155.4L416.3,121.4L479.7,137.8L543.0,147.8L606.3,134.0L669.7,152.9L733.0,134.0L796.3,145.3" class="c line" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+<circle cx="99.7" cy="156.6" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="163.0" cy="160.4" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="226.3" cy="147.8" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="289.7" cy="146.6" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="353.0" cy="155.4" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="416.3" cy="121.4" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="479.7" cy="137.8" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="543.0" cy="147.8" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="606.3" cy="134.0" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="669.7" cy="152.9" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="733.0" cy="134.0" r="5" class="c fill ring" stroke-width="2"/>
+<circle cx="796.3" cy="145.3" r="5" class="c fill ring" stroke-width="2"/>
+<text x="819.6" y="290.1" class="t small" text-anchor="end">Run 3 after 120 s: threads move to E-cores (P use 46→38%, E 27→40%)</text>
+<text x="819.6" y="305.2" class="s small" text-anchor="end">Frequency and temperature unchanged</text>
+<text x="448.0" y="356.0" class="s small" text-anchor="middle">Time under load (15-second medians)</text></svg>

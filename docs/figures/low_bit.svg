@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 378" role="img" aria-label="Hit rate change for low-bit and sparse U-Nets"><style>
+.bg{fill:#fcfcfb}.t{fill:#0b0b0b}.s{fill:#52514e}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.edge{stroke:#8a8983}
+.a{--c:#2a78d6}.b{--c:#eb6834}.c{--c:#6e6d68}
+.fill{fill:var(--c)}.line{stroke:var(--c)}.ring{stroke:#fcfcfb}.tint{fill:var(--c);fill-opacity:.12}.card{fill:#fcfcfb}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.title{font-size:16px;font-weight:600}.small{font-size:12px}.bold{font-weight:600}
+@media (prefers-color-scheme:dark){
+.bg,.card{fill:#1a1a19}.t{fill:#f0efec}.s{fill:#c3c2b7}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.edge{stroke:#8a8983}
+.a{--c:#3987e5}.b{--c:#d95926}.c{--c:#a9a89f}.ring{stroke:#1a1a19}}
+</style><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a8983"/></marker></defs><rect class="bg" width="860" height="378" rx="8"/>
+<text x="24.0" y="30.0" class="t title" text-anchor="start">INT8 with 2:4 sparsity keeps the hit rate; 4-bit activations do not</text>
+<text x="24.0" y="50.0" class="s small" text-anchor="start">Cross-validation hit rate difference, 95% CI. Dashed: the pre-set margin of about −1 point</text>
+<line x1="300.0" y1="80.0" x2="300.0" y2="296.0" class="grid" stroke-width="1" />
+<text x="300.0" y="315.0" class="s small" text-anchor="middle">-10</text>
+<line x1="381.5" y1="80.0" x2="381.5" y2="296.0" class="grid" stroke-width="1" />
+<text x="381.5" y="315.0" class="s small" text-anchor="middle">-8</text>
+<line x1="463.1" y1="80.0" x2="463.1" y2="296.0" class="grid" stroke-width="1" />
+<text x="463.1" y="315.0" class="s small" text-anchor="middle">-6</text>
+<line x1="544.6" y1="80.0" x2="544.6" y2="296.0" class="grid" stroke-width="1" />
+<text x="544.6" y="315.0" class="s small" text-anchor="middle">-4</text>
+<line x1="626.2" y1="80.0" x2="626.2" y2="296.0" class="grid" stroke-width="1" />
+<text x="626.2" y="315.0" class="s small" text-anchor="middle">-2</text>
+<line x1="707.7" y1="80.0" x2="707.7" y2="296.0" class="grid" stroke-width="1" />
+<text x="707.7" y="315.0" class="s small" text-anchor="middle">0</text>
+<line x1="789.2" y1="80.0" x2="789.2" y2="296.0" class="grid" stroke-width="1" />
+<text x="789.2" y="315.0" class="s small" text-anchor="middle">+2</text>
+<line x1="707.7" y1="80.0" x2="707.7" y2="296.0" class="axis" stroke-width="1" />
+<line x1="666.9" y1="80.0" x2="666.9" y2="296.0" class="edge" stroke-width="1" stroke-dasharray="4 4"/>
+<text x="288.0" y="102.0" class="t small" text-anchor="end">W4A8 QAT vs INT8 (seed 0)</text>
+<line x1="655.9" y1="98.0" x2="760.7" y2="98.0" class="a line" stroke-width="2" stroke-linecap="round"/>
+<circle cx="707.7" cy="98.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="288.0" y="138.0" class="t small" text-anchor="end">W4A4 QAT vs INT8 (seed 0)</text>
+<line x1="342.8" y1="134.0" x2="573.2" y2="134.0" class="b line" stroke-width="2" stroke-linecap="round"/>
+<circle cx="459.8" cy="134.0" r="5" class="b fill ring" stroke-width="2"/>
+<text x="288.0" y="174.0" class="t small" text-anchor="end">2:4 sparse FP32 vs FP32 (seed 0)</text>
+<line x1="684.9" y1="170.0" x2="778.2" y2="170.0" class="a line" stroke-width="2" stroke-linecap="round"/>
+<circle cx="729.7" cy="170.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="288.0" y="210.0" class="t small" text-anchor="end">2:4 + INT8 vs dense INT8 (5 seeds)</text>
+<line x1="701.6" y1="206.0" x2="755.0" y2="206.0" class="a line" stroke-width="2" stroke-linecap="round"/>
+<circle cx="728.1" cy="206.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="288.0" y="246.0" class="t small" text-anchor="end">2:4 + W4A8 vs dense INT8 (seed 0)</text>
+<line x1="596.8" y1="242.0" x2="730.1" y2="242.0" class="b line" stroke-width="2" stroke-linecap="round"/>
+<circle cx="664.1" cy="242.0" r="5" class="b fill ring" stroke-width="2"/>
+<text x="288.0" y="282.0" class="t small" text-anchor="end">2:4 fixed point vs integer (5 seeds)</text>
+<line x1="699.9" y1="278.0" x2="718.7" y2="278.0" class="a line" stroke-width="2" stroke-linecap="round"/>
+<circle cx="709.3" cy="278.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="565.0" y="336.0" class="s small" text-anchor="middle">Hit rate difference (points); 2:4 keeps the stem and the 32→3 output layer dense</text></svg>

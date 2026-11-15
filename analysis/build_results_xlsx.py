@@ -1,4 +1,5 @@
 import csv
+import re
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -90,8 +91,11 @@ def overview(wb):
     sheets = [
         ("新切分_主結果", "新切分: 七個模型、U-Net 與 YOLO26s 五個種子、合併種子的病人層級檢定(論文主表;以 lcc 版本為準)"),
         ("新切分_延伸", "新切分(lcc): 困難案例、可辨識性分層、串接式推論與輸出方式、R34/384、推論時翻轉、半監督、瘦 decoder、端到端、量化、自動 ROI估計"),
+        ("新切分_硬體", "新切分(lcc,種子 0): 加速器分析模型的 4-bit / 2:4、W4A8 / W4A4 QAT、2:4 稀疏、2:4 + 量化"),
+        ("新切分_部署", "部署版本(自動 ROI → INT8 串接式 → 牙位 → 旗標)的 5 種子準確度、筆電 CPU 逐段延遲、INT8 vs FP32、2:4 在 CPU 上的速度"),
         ("新切分_舊實驗重跑", "新切分(lcc): 消融、學習曲線、CLAHE 前處理重跑(取代舊切分的三張工作表的結論)"),
-        ("牙位", "測試集的牙位正確率:正常牙、缺牙、FDI 錯分組;規則與自動流程"),
+        ("牙位", "測試集的牙位正確率:正常牙、缺牙、FDI 錯分組;規則與自動流程;5 種子與硬體版本;全部的側的轉介與正確率;中線規則分析(探索)"),
+        ("新切分_畫質與錯誤", "新切分(lcc): 頦孔定位的畫質特徵與錯誤種類、第一階段 FDI 錯與畫質、推論端與訓練端的改善嘗試(都沒採用)"),
         ("新切分_運算量", "新切分: U-Net encoder 與輸入尺寸的精度對運算量(三個種子)"),
         ("主要結果_種子","最終 U-Net 與 YOLO 在三個隨機種子下的結果,平均、標準差與差距以公式計算"),
         ("差值CI", "U-Net − YOLO 差值的 95% 信賴區間(各種子、三種子平均、依可辨識性分組)"),
@@ -508,6 +512,73 @@ def pano_more(wb):
     s.finish()
 
 
+def hardware(wb):
+    # 2026-11-10: 4-bit QAT、2:4 稀疏、2:4 + 量化(種子 0,見 EXPERIMENTS.md「硬體: 結構化稀疏與 4-bit 的評估與規劃」)
+    s = Sheet(wb, "新切分_硬體", "硬體化: 4-bit 量化與 2:4 結構化稀疏(新切分,lcc;補種子之外都是種子 0)",
+              ["加速器分析模型是一階解析模型(不是 RTL、沒有算面積);精度比較都只有種子 0,不能寫進論文定論",
+               "4-bit 用 fake-quant 評估(FBGEMM 沒有 4-bit 整數 kernel);對照: fake-quant INT8 與整數 INT8 命中差 0",
+               "2:4 第二輪(head.1 dense)與第三輪(2:4 + 量化)是看過第一輪結果才定的設定,只用 CV 判斷,測試集只記錄"])
+    sweep = [r for r in read_rows("../roofline/accel_lowbit/sweep.csv")
+             if r["policy"] == "R34/512 five-fold" and r["sram_kb"] == "1024" and r["array"] in ("32", "64")]
+    s.table("加速器分析模型(R34/512 五折,SRAM 1 MB)", ["設定", "陣列", "頻寬 GB/s", "使用率", "DRAM MB", "延遲 ms", "能耗 mJ"],
+            lambda first: [[r["config"], int(r["array"]), float(r["bw_gbs"])]
+                           + [float(r[k]) for k in ("utilization", "traffic_mb", "latency_ms", "energy_mj")] for r in sweep],
+            [None, "0", "0.0", PCT, "0.0", "0.0", "0.0"],
+            note="2:4 假設精度不變、K 方向減半;能耗 MAC 0.2 pJ·w·a/64 + 0.1 pJ。來源: accel_lowbit.py → roofline/accel_lowbit/sweep.csv")
+    comps = [
+        ("fq_vs_int8", "對照: INT8 fake-quant − 整數 INT8", ""),
+        ("fq_vs_fp32", "INT8 fake-quant − FP32", ""),
+        ("w4a8_vs_fq", "W4A8 QAT − INT8 fake-quant(QAT 種子 0)", ""),
+        ("w4a8qs1_vs_fq", "W4A8 QAT − INT8 fake-quant(QAT 種子 1)", "FP32 起點都是種子 0,只換 QAT 種子。"),
+        ("w4a8qs2_vs_fq", "W4A8 QAT − INT8 fake-quant(QAT 種子 2)", "同上。"),
+        ("w4a8qs3_vs_fq", "W4A8 QAT − INT8 fake-quant(QAT 種子 3)", "同上。"),
+        ("w4a8qs4_vs_fq", "W4A8 QAT − INT8 fake-quant(QAT 種子 4)", "同上。"),
+        ("w4a8_vs_fp32", "W4A8 QAT − FP32", ""),
+        ("w4a4_vs_fq", "W4A4 QAT − INT8 fake-quant", "不通過。"),
+        ("w4a8ptq_vs_fq", "W4A8 只校正 − INT8 fake-quant", ""),
+        ("w4a4ptq_vs_fq", "W4A4 只校正 − INT8 fake-quant", ""),
+        ("sp24_ft_vs_fp32", "2:4 第一輪(全部剪)剪 + 微調 − FP32", "不通過: fold 0、3 的 mf 消失。"),
+        ("sp24_prune_vs_fp32", "2:4 第一輪只剪 − FP32", ""),
+        ("sp24d_ft_vs_fp32", "2:4 第二輪(head.1 dense)剪 + 微調 − FP32", "只用 CV 判斷。"),
+        ("sp24d_prune_vs_fp32", "2:4 第二輪只剪 − FP32", ""),
+        ("w8a8sp24dqat_vs_fq", "2:4 + INT8 QAT − INT8 fake-quant(dense)", "第三輪,只用 CV 判斷。"),
+        ("w8a8sp24dptq_vs_fq", "2:4 + INT8 只校正 − INT8 fake-quant(dense)", ""),
+        ("w8a8sp24dqat_vs_sp24d", "2:4 + INT8 QAT − 2:4 FP32", ""),
+        ("w4a8sp24dqat_vs_fq", "2:4 + W4A8 QAT − INT8 fake-quant(dense)", "第三輪,只用 CV 判斷。"),
+        ("w4a8sp24dptq_vs_fq", "2:4 + W4A8 只校正 − INT8 fake-quant(dense)", ""),
+        ("w4a8sp24dqat_vs_sp24d", "2:4 + W4A8 QAT − 2:4 FP32", ""),
+        ("sp24dint8_vs_fq", "2:4 + INT8 整數 − 2:4 + INT8 fake-quant", "sparse_int8_verify.py,convert_fx。"),
+        ("sp24dint8_vs_int8", "2:4 + INT8 整數 − dense 整數 INT8(tq_qat 種子 0)", "RTL 用的整數路徑。"),
+        ("sp24dfx_vs_int8", "2:4 + INT8 定點 − 2:4 + INT8 整數(只有測試)", "32 位元累加器、16 位元乘數。"),
+        ("fixed_seed0", "對照: dense 定點 − dense 整數(種子 0,只有測試)", ""),
+        # 2026-11-10 補種子(run_seeds_rt.sh;種子 1–4 的 FP32 重訓在 kfold_pano_mf_559_rt)。單一種子與 rt_vs_orig 的串接列不對(cascade_stats 種子集合不同),不放
+        ("../int8_pano/slim_eval_int8sp24d_vs_int8_rt_summary_s01234.csv", "補種子: 2:4 + INT8 QAT − dense INT8 fake-quant(五種子合併)", "事先定的主要比較,判準 CV 命中不掉超過約 1 點: 通過。"),
+        ("../int8_pano/slim_eval_int8sp24d_vs_sp24d_rt_summary_s01234.csv", "補種子: 2:4 + INT8 QAT − 2:4 FP32(五種子合併)", ""),
+    ] + [(f"../int8_pano/slim_eval_int8sp24d_vs_int8_rt_summary_s{k}.csv", f"補種子: 2:4 + INT8 QAT − dense INT8 fake-quant(種子 {k})", "nocascade")
+         for k in (1, 2, 3, 4)] + [
+        ("../kfold_pano_mf_559_rt/slim_eval_rt_vs_orig_summary_s1234.csv", "補種子: 重訓 FP32 − 原主結果(種子 1–4 合併)", "nocascade"),
+        # 2026-11-11 定點設計五種子(fx_seeds.py、run_fx_seeds.sh;RTL 規格 = 16 位元乘數 + 偏置與殘差加法多留 8 個小數位元、只捨入一次)
+        ("../int8_pano/slim_eval_fxs_sp24rtl_vs_int_summary_s01234.csv", "定點: 2:4 RTL 規格 − 2:4 整數(五種子合併)", "事先定的主要比較,判準 CV 命中不掉超過約 1 點且 CV mf Dice CI 下界 ≥ −0.002: 通過。"),
+        ("../int8_pano/slim_eval_fxs_sp24fx_vs_int_summary_s01234.csv", "定點: 2:4 原定點設定 − 2:4 整數(五種子合併)", "測試 mf Dice 小降在五種子重現,CV 沒有。"),
+        ("../int8_pano/slim_eval_fxs_densertl_vs_int_summary_s01234.csv", "定點: dense RTL 規格 − dense 整數(五種子合併)", ""),
+        ("../int8_pano/slim_eval_fxs_densefx_vs_int_summary_s01234.csv", "定點: dense 原定點設定 − dense 整數(五種子合併)", ""),
+        ("../int8_pano/slim_eval_fxs_sp24rtl_vs_denseint_summary_s01234.csv", "定點: 2:4 RTL 規格 − dense 整數(端到端,五種子合併)", ""),
+    ]
+    for name, title, note in comps:
+        src = name if name.endswith(".csv") else f"../int8_pano/slim_eval_{name}_summary_s0.csv"
+        rows = read_rows(src)
+        if note == "nocascade":
+            rows, note = [r for r in rows if "cascade" not in r["setting"]], "串接列不放(種子集合不同)。"
+        if not rows:
+            continue
+        s.table(title, ["集合", "指標", "基準", "比較", "差", "CI 下", "CI 上", "p", "ROI", "得", "失"],
+                lambda first, rows=rows: [[r["setting"], r["metric"]] + [float(r[k]) for k in ("base", "slim", "diff", "ci_low", "ci_high", "p")]
+                                          + [int(r["n"]), int(r["gain"]) if r["gain"] else None, int(r["lost"]) if r["lost"] else None] for r in rows],
+                [None, None, D4, D4, D4, D4, D4, D4, None, None, None],
+                note=f"{note}來源: qat_int4.py / sparse24.py → slim_eval.py → {src.removeprefix('../')}")
+    s.finish()
+
+
 def pano_rerun(wb):
     # 2026-11-04: 舊實驗(消融、學習曲線、前處理)在新切分上重跑(run_rerun_old.sh),頦孔一律 lcc
     s = Sheet(wb, "新切分_舊實驗重跑", "消融、學習曲線、前處理在新切分上重跑(頦孔一律 lcc)",
@@ -599,6 +670,124 @@ def tooth_position(wb):
              "自動流程 U-Net vs 原始標註", "自動 ROI U-Net", "自動 ROI YOLO26s"], rows,
             [None, None, PCT, PCT, PCT, PCT, PCT, PCT, PCT],
             note="自動流程 = 五折多數決(種子 0)預測的頦孔 + 同一規則,人工 ROI;沒有預測算錯。自動 ROI = 第一階段裁切、存讀兩次 JPEG(e2e_axisv2_jpeg)。除「vs 原始標註」兩欄外都對複查後標註。缺牙與 FDI 錯規則仍會輸出答案,但沒有正確答案,需要偵測後轉介")
+    position_extra(s, base)
+    s.finish()
+
+
+def position_extra(s, base):
+    # 2026-11-05: 牙位 5 種子與硬體版本(position_seeds.py)、系統層級轉介(position_referral.py)、中線規則分析(midline_teeth32.py)
+    def read(p):
+        if not p.exists():
+            print(f"[略過] 找不到 {p}")
+            return []
+        with open(p, newline="") as f:
+            return list(csv.DictReader(f))
+    num = lambda v: float(v) if v not in ("", None) else None
+    seeds_csv = read(base / "position_seeds" / "summary.csv")
+    if seeds_csv:
+        by = {(r["labels"], r["variant"]): r for r in seeds_csv}
+        variants = list(dict.fromkeys(r["variant"] for r in seeds_csv))
+        def rows(first):
+            out = []
+            for v in variants:
+                o, a = by[("orig", v)], by[("adj", v)]
+                out.append([v, int(o["seeds"]), int(o["n"]), num(o["mean"]), num(o["sd"]), num(a["mean"]),
+                            num(o["diff"]), num(o["ci_lo"]), num(o["ci_hi"]), num(o["p"])])
+            return out
+        s.table("牙位正確率: 5 種子與硬體版本(正常牙,自動流程)",
+                ["版本", "種子數", "n", "原始標註 平均", "SD", "複查後標註 平均", "差(− 主結果)", "95% CI 下", "95% CI 上", "p"], rows,
+                [None, None, None, PCT, PCT, PCT, PCT, PCT, PCT, "0.00"],
+                note="position_seeds.py: v2 參考線 + 中央一半,測試集五折多數決 → lcc,strict;每個頦孔先對種子取平均,差與 CI 對原始標註(複查後的差相同),以全景片 bootstrap 2000 次。n = 102 的 CI 約 ±2–3 點,不顯著只代表沒看到差異")
+    ref = read(base / "referral" / "summary.csv")
+    if ref:
+        by = {(r["labels"], r["policy"]): r for r in ref}
+        policies = list(dict.fromkeys(r["policy"] for r in ref))
+        def rows(first):
+            out = []
+            for p in policies:
+                o, a = by[("orig", p)], by[("adj", p)]
+                n = int(o["sides"])
+                out.append([p, n, num(o["referred"]), f"=C{{r}}/B{{r}}", num(o["auto_accuracy"]), num(o["ci_lo"]), num(o["ci_hi"]),
+                            num(o["silent_wrong"]), f"=H{{r}}/B{{r}}", num(a["auto_accuracy"]),
+                            f'{float(o["abnormal_referred"]):.1f} / {o["abnormal"]}', f'{float(o["normal_referred"]):.1f} / {o["normal"]}'])
+            return out
+        s.table("系統層級: 全部的側(正常牙 + 缺牙 + FDI 錯)的轉介與正確率",
+                ["策略", "側數", "轉介(側)", "轉介比例", "自動回答正確率(原始)", "95% CI 下", "95% CI 上", "靜默錯誤(側)", "靜默錯誤比例",
+                 "自動回答正確率(複查後)", "異常側被轉介", "正常牙被轉介"], rows,
+                [None, None, "0.0", PCT, PCT, PCT, PCT, "0.0", PCT, PCT, None, None],
+                note="position_referral.py: 主結果 5 種子平均;異常側沒轉介算錯、沒有預測算轉介。偵測器 = 兩種編號 x4–x6 不一致 或 頦孔側比對側少 ≥ 1 顆;"
+                     "分歧度 / 邊界距離的 10% 在測試集上以排名決定(沒用標註)。曲線見 compare_results/mf_position/referral/referral_curve.png")
+    mid = base / "midline"
+    shadow, agree = read(mid / "summary_shadow.csv"), read(mid / "summary_agree.csv")
+    if shadow and agree:
+        name = {"crown": "牙冠寬度", "apex": "根尖寬度"}
+        s.table("中線規則分析(探索,使用者提議): 頦孔落在幾顆牙的寬度範圍內(32 類牙齒遮罩)",
+                ["參考", "某一顆牙下方", "比例", "間隙", "重疊", "n"],
+                lambda first: [[name[r["reference"]], int(r["one_tooth"]), "=B{r}/F{r}", int(r["gap"]), int(r["overlap"]), int(r["n"])] for r in shadow],
+                [None, None, PCT, None, None, None])
+        rule_name = {"cur_s1": "中央一半(第一階段參考線)", "mid_s1": "中線 0.5 r(第一階段參考線)",
+                     "cur_32": "中央一半(32 類長軸)", "mid_32": "中線 0.5 r(32 類長軸)",
+                     "cur": "中央一半", "mid": "中線 0.5 r"}
+        ref_name = {**name, "stage1_vs_teeth32": "兩套參考線判定相同"}
+        s.table("中線規則分析: 規則與參考的一致率",
+                ["參考", "規則", "一致", "n", "一致率"],
+                lambda first: [[ref_name[r["reference"]], rule_name[r["rule"]], int(r["agree"]), int(r["n"]), "=C{r}/D{r}"] for r in agree],
+                [None, None, None, None, PCT],
+                note="midline_teeth32.py: GT 頦孔;牙冠 / 根尖寬度沿 32 類模型的牙齒長軸往下延伸,排除重疊。與牙冠參考的一致有一部分是構造使然(牙冠緊貼時中線 ≈ 接觸點)。"
+                     "對人工標註的比較不能當證據(標註依中央一半、開著參考線標)。牙位定義待使用者看疊圖決定,主結果維持中央一半")
+
+
+
+def md_cell(v):
+    # summary.md 的格子: "87.12%" → 0.8712(百分比格式);純數字 → 數字;其餘保留文字
+    v = v.strip()
+    try:
+        if v.endswith("%") and v[:-1].replace(".", "", 1).replace("-", "", 1).replace("+", "", 1).isdigit():
+            return float(v[:-1]) / 100, PCT
+        return float(v.replace("+", "", 1)) if v[:1] in "+-0123456789" and v != "-" else v, None
+    except ValueError:
+        return v, None
+
+
+def quality(wb):
+    # 2026-11-05: 最不穩定的階段(頦孔定位)的畫質 / 錯誤分析與改善嘗試;數字取自三份 summary.md
+    base = ROOT / "compare_results" / "quality_errors"
+    s = Sheet(wb, "新切分_畫質與錯誤", "頦孔定位: 畫質與錯誤分析、改善嘗試(2026-11-05,新切分 lcc)",
+              ["結論: 第二階段頦孔定位最受畫質影響(低 CNR、低對比、第二批);第一階段 FDI 錯和畫質無關。",
+               "推論端 6 種方法與訓練端 2 種方法都沒通過事先定的判準(CV 命中差 95% CI 下界 > 0),主結果維持 r34_imagenet_aug。",
+               "5 種子 CV 多數決 +1.11 點 [0.18, 2.13](推論成本 ×5)。CNR、邊緣梯度、離 ian 距離要用 GT 算,只做分析。"])
+    sources = [(base / "summary.md", "錯誤分析(quality_errors.py,5 種子)"),
+               (base / "methods" / "summary.md", "推論端方法(quality_methods.py,種子 0)"),
+               (base / "train" / "summary.md", "訓練端方法(quality_train_eval.py,種子 0)"),
+               (ROOT / "compare_results" / "quality_gate" / "summary.md", "畫質檢查與純影像數值的頦孔偵測(quality_gate.py,11/14,探索性)")]
+    for path, label in sources:
+        if not path.exists():
+            print(f"[略過] 找不到 {path}")
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        heading, i = "", 0
+        while i < len(lines):
+            line = lines[i]
+            if line.startswith("## "):
+                heading = line[3:].strip()
+            elif line.lstrip().startswith("- "):
+                s.cell(1, line.strip()[2:], italic=True)
+                s.row += 1
+            elif line.startswith("|"):
+                block = []
+                while i < len(lines) and lines[i].startswith("|"):
+                    block.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
+                    i += 1
+                header, body = block[0], [r for r in block[2:]]
+                parsed = [[md_cell(v) for v in r] for r in body]
+                fmts = [next((f for row in parsed if j < len(row) for f in [row[j][1]] if f), None) for j in range(len(header))]
+                s.row += 1
+                s.table(f"{label}: {heading}" if heading else label, header,
+                        lambda first, parsed=parsed: [[v for v, _ in r] for r in parsed], fmts,
+                        note=f"來源: {path.relative_to(ROOT)}")
+                continue
+            i += 1
+        s.row += 1
     s.finish()
 
 
@@ -728,6 +917,7 @@ def evidence(wb):
         ("U-Net 設計變體", "A", "病人層級", "最終設定與變體", "有", 1, "陰性結果", "kfold_patient_variants.py"),
         ("測試集獨立性檢查", "A", "—", "—", "—", "—", "以影像內容找出每張 ROI 的來源全景片(614/697 可驗證):測試集與訓練資料無共用全景片,訓練資料內無重複裁切或跨折", "locate_roi_sources.py"),
         ("前處理比較(新)", "A", "病人層級", "最終設定", "有", 1, "參數與統計方法事先固定;強增強與無增強兩種設定", "kfold_preprocessing.py"),
+        ("畫質與錯誤分析、改善嘗試", "B", "全景片層級", "最終設定與變體", "有", "5 / 1", "CNR 等需 GT 的特徵只做分析;方法比較只有種子 0,陰性結果", "quality_errors.py、quality_methods.py、quality_train_eval.py"),
         ("交叉批次實驗", "B", "病人層級", "最終設定", "有", 1, "單一批次只用約一半資料", "cross_batch.py"),
         ("頦孔可辨識性分層", "B", "病人層級", "最終設定與 YOLO", "有", 1, "單一判定者,與先前判斷的 kappa 0.56", "visibility_grading.py"),
         ("人工標註一致性", "B", "—", "—", "—", "—", "只有 40 張,單一標註者前後兩次", "annotation_agreement.py"),
@@ -766,10 +956,211 @@ def appendix(wb):
         ws.freeze_panes = "A2"
 
 
+def deployment(wb):
+    # 2026-11-13: 完整部署流程(deploy_pipeline.py)的準確度與筆電 CPU 延遲、INT8 vs FP32、2:4 在 CPU 上的速度
+    import statistics
+    base = ROOT / "compare_results" / "deploy_eval"
+    s = Sheet(wb, "新切分_部署", "部署版本的整合評估與 CPU 延遲(2026-11-13)",
+              ["部署版本: 自動 ROI(兩次 JPEG)→ U-Net R34/512 OpenVINO INT8 PTQ(dense,沒有 QAT / 2:4)串接式 → lcc → 牙位 → 缺牙 / FDI 錯旗標。",
+               "準確度: 伺服器 CPU,5 種子;延遲: 筆電 i5-13500H CPU,插電、最佳效能。部署數字,不放進 CV / SOP。"])
+    path = base / "score" / "summary_mf.csv"
+    if path.exists():
+        rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+        s.table("頦孔(測試 137 ROI,5 種子平均,以病人為組): 對照 → 部署", ["對照", "指標", "對照", "部署", "差", "95% CI 下", "95% CI 上", "p", "得", "失"],
+                lambda first: [[r["base"].split("/")[1], r["metric"], float(r["base_mean"]), float(r["other_mean"]), float(r["diff"]),
+                                float(r["ci_low"]), float(r["ci_high"]), float(r["p"]), int(r["gain"]), int(r["lost"])] for r in rows],
+                [None, None, D4, D4, D4, D4, D4, D4], note=f"來源: {path.relative_to(ROOT)}(manual = 主結果人工 ROI FP32 五折;auto_jpeg = 自動 ROI FP32 五折)")
+    path = base / "score" / "summary.md"
+    if path.exists():
+        s.cell(1, "牙位與系統層級(摘自 summary.md)", bold=True, size=11)
+        s.row += 1
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("## ") and not line.startswith("## 1"):
+                s.cell(1, line[3:], bold=True)
+                s.row += 1
+            elif line.startswith("- ") and not line.startswith("- r34"):
+                s.cell(1, line[2:], italic=True)
+                s.row += 1
+        s.row += 1
+    # 2026-11-15: 相同條件重測(run_remeasure.ps1,time6_*),同一時段 3 輪;取代 time_laptop_test 當主要延遲數字
+    path = base / "time6_summary.csv"
+    if path.exists():
+        rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+        labels = {"A": "11/13 上午整合評估(兩個牙齒模型 FP32、32 類 @1024、交集、舊後處理、torch.argmax)", "B": "11/13 下午正式版(32 類 INT8 @1024、聯集)",
+                  "C": "+ 第一階段後處理只算框內", "D": "+ 32 類模型 640", "E": "+ 快速 argmax(正式部署版本)", "F": "E 但第二階段 U-Net FP32"}
+        cfgs = sorted({r["cfg"] for r in rows})
+        med = lambda c, k: statistics.median(float(r[k]) for r in rows if r["cfg"] == c)
+        lo = lambda c, k: min(float(r[k]) for r in rows if r["cfg"] == c)
+        hi = lambda c, k: max(float(r[k]) for r in rows if r["cfg"] == c)
+        s.table("筆電 CPU 延遲重測(2026-11-15,測試集 103 張,同一時段 3 輪;各輪平均的中位數)",
+                ["設定", "內容", "每張平均 ms", "最低輪", "最高輪", "中位數 ms", "p90 ms", "第一階段 ms", "第二階段 ms", "旗標 ms"],
+                lambda first: [[c, labels.get(c, ""), med(c, "mean"), lo(c, "mean"), hi(c, "mean"), med(c, "median"), med(c, "p90"),
+                                med(c, "stage1"), med(c, "stage2_model"), med(c, "flags")] for c in cfgs],
+                [None, None, "0", "0", "0", "0", "0", "0", "0", "0"],
+                note="來源: compare_results/deploy_eval/time6_summary.csv;接電源、100% 不充電、最佳效能、沒開其他程式。"
+                     "筆電在不同時段可差約 ±25%,只比同一時段內的差或倍數(EXPERIMENTS.md「2026-11-15 筆電延遲重測」)")
+    path = base / "time_laptop_test" / "timing.csv"
+    if path.exists():
+        rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+        stages = ["read", "stage1", "crop", "preprocess", "stage2_model", "stage2_post", "position", "flags", "wall_ms"]
+        total = statistics.mean(float(r["wall_ms"]) for r in rows)
+        s.table(f"(舊,11/13 上午,只作參考)筆電 CPU 每張全景片的延遲(測試集 {len(rows)} 張,INT8 串接式)", ["階段", "平均 ms", "中位數 ms", "佔牆鐘時間"],
+                lambda first: [[st, statistics.mean(float(r[st]) for r in rows), statistics.median(float(r[st]) for r in rows),
+                                statistics.mean(float(r[st]) for r in rows) / total] for st in stages],
+                [None, "0.0", "0.0", PCT], note=f"來源: {path.relative_to(ROOT)}")
+    variants = [("score", "牙齒 PyTorch、交集"), ("score_union", "牙齒 PyTorch、聯集"), ("score_yolo_int8", "兩個牙齒模型 INT8、交集"),
+                ("score_yolo_int8_union", "兩個牙齒模型 INT8、聯集"), ("score_mixed_union", "第一階段 FP32、32 類 INT8 @ 1024、聯集(11/13 白天的正式版本)"),
+                ("score_t32_640", "第一階段 FP32、32 類 INT8 @ 640、聯集(11/13 晚的正式版本,沒有邊界距離轉介)"), ("score_slimhalf", "正式部署 + 瘦身解碼器(五種子)"),
+                ("score_median3", "正式部署 + 3×3 中值濾波"), ("score_median3_zscore", "正式部署 + 中值濾波 + zscore"),
+                ("score_hetero_s0", "混合式串接: 先 R34/384(只有種子 0)"), ("score_flipflag", "正式部署 + 翻轉一致性旗標(牙位不變,只多轉介)"), ("score_official", "正式部署(11/14 起,含邊界距離轉介 0.138)"), ("score_hetero", "混合式串接: 先 R34/384(五種子)"),
+                ("score_s1_aac", "第一階段 accuracy control INT8、32 類 INT8、聯集"), ("score_s1_mixed", "第一階段混合精度(18 / 23 塊 FP32)、32 類 INT8、聯集")]
+    vrows = []
+    for d, label in variants:
+        mf, md = base / d / "summary_mf.csv", base / d / "summary.md"
+        if not (mf.exists() and md.exists()):
+            continue
+        m = {r["metric"]: r for r in csv.DictReader(open(mf, newline="", encoding="utf-8")) if r["base"].endswith("/manual")}
+        text = md.read_text(encoding="utf-8")
+        pos = [float(x) / 100 for x in re.findall(r"標註\(n = \d+\): 部署 ([\d.]+)", text)]
+        ref = re.search(r"- 原始標註: 轉介 ([\d.]+)%、自動回答中正確 ([\d.]+)%、靜默錯誤 ([\d.]+)%", text)
+        vrows.append([label, float(m["mf_hit_1R"]["other_mean"]), float(m["mf_hit_1R"]["diff"]), float(m["mf_dice"]["other_mean"]),
+                      float(m["mf_dice"]["diff"]), pos[0], pos[1]] + [float(x) / 100 for x in ref.groups()])
+    if vrows:
+        s.table("部署變體(5 種子;差 = 部署 − 主結果人工 ROI FP32 五折)",
+                ["版本", "頦孔命中", "命中差", "mf Dice", "Dice 差", "牙位 原始", "牙位 複查後", "轉介", "自動答對", "靜默錯誤"],
+                lambda first: vrows, [None, PCT, "0.0000", D4, D4, PCT, PCT, PCT, PCT, PCT],
+                note="來源: compare_results/deploy_eval/score*/summary_mf.csv、summary.md;配對比較與 CI 見 EXPERIMENTS.md「部署變體」")
+    yrows = []
+    for d, label in (("time_test_yolo_ov_fp32_a", "兩個 FP32 (a)"), ("time_test_yolo_ov_int8_a", "兩個 INT8 (a)"),
+                     ("time_test_yolo_ov_fp32_b", "兩個 FP32 (b)"), ("time_test_yolo_ov_int8_b", "兩個 INT8 (b)"),
+                     ("time_test_mixed_union_a", "第一階段 FP32、32 類 INT8、聯集 (a)"), ("time_test_mixed_union_b", "第一階段 FP32、32 類 INT8、聯集 (b)")):
+        path = base / d / "timing.csv"
+        if path.exists():
+            rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+            yrows.append([label] + [statistics.mean(float(r[k]) for r in rows) for k in ("wall_ms", "stage1", "flags", "stage2_model")])
+    if yrows:
+        s.table("牙齒模型 FP32 vs INT8(筆電 CPU,測試集 104 張,每張平均)", ["牙齒模型", "每張 ms", "第一階段 ms", "旗標 ms", "第二階段 ms"],
+                lambda first: yrows, [None, "0.0", "0.0", "0.0", "0.0"], note="來源: compare_results/deploy_eval/time_test_*/timing.csv")
+    path = base / "stage1_int8" / "results.csv"
+    if path.exists():
+        rows = [r for r in csv.DictReader(open(path, newline="", encoding="utf-8"))
+                if not r["method"].startswith(("INVALID", "mixed2_sens", "check")) and (r["method"] != "mixed2" or r["variant"] in ("11 blocks FP32", "18 blocks FP32"))]
+        s.table("第一階段 INT8 的三種改善: 開發集(非測試 303 張、476 個頦孔)與 FP32 牙位一致率", ["方法", "版本", "一致率", "改變數", "參考線位移 p95 px"],
+                lambda first: [[r["method"], r["variant"], float(r["agree"]), int(r["changed"] or 0), float(r["shift_p95"] or 0)] for r in rows],
+                [None, None, "0.000", "0", "0.0"], note="來源: compare_results/deploy_eval/stage1_int8/results.csv;測試集結果見上方部署變體表;伺服器速度 FP32 51.2 / PTQ 21.3 / accuracy control 30.2 / 混合 48.9 / QAT 25.6 ms")
+    trows = []
+    for d, label in (("time2_base", "11/13 白天的正式版本"), ("time2_fast", "+ 後處理加速(結果完全相同)"), ("time2_fast_t768", "+ 32 類模型 768"),
+                     ("time2_fast_t640", "+ 32 類模型 640(正式部署)"), ("time2_fast_t640_slim", "+ 32 類模型 640 + 瘦身解碼器(種子 0)")):
+        for r_ in ("c", "d"):
+            path = base / f"{d}_{r_}" / "timing.csv"
+            if path.exists():
+                rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+                trows.append([f"{label} ({r_})"] + [statistics.mean(float(r[k]) for r in rows) for k in ("wall_ms", "stage1", "flags", "stage2_model")])
+    if trows:
+        s.table("再加速: 後處理、32 類模型解析度、瘦身解碼器(筆電 CPU,測試集 103 張,同一輪交替)", ["版本", "每張 ms", "第一階段 ms", "旗標 ms", "第二階段 ms"],
+                lambda first: trows, [None, "0.0", "0.0", "0.0", "0.0"],
+                note="來源: compare_results/deploy_eval/time2_*/timing.csv;準確度見 EXPERIMENTS.md「部署流程再加速」(後處理逐像素相同;32 類 640 轉介 +0.8 點;瘦身解碼器只有種子 0)")
+    trows = []
+    for d, label in (("time3_base", "正式部署"), ("time3_median3", "+ 3×3 中值濾波"), ("time3_hetero", "混合式串接: 先 R34/384(種子 0)")):
+        for r_ in ("e", "f"):
+            path = base / f"{d}_{r_}" / "timing.csv"
+            if path.exists():
+                rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+                trows.append([f"{label} ({r_})"] + [statistics.mean(float(r[k]) for r in rows) for k in ("wall_ms", "stage2_model")]
+                             + [statistics.median(float(r["wall_ms"]) for r in rows), statistics.quantiles([float(r["wall_ms"]) for r in rows], n=10, method="inclusive")[-1],
+                                sum(float(r["models_run"]) for r in rows) / sum(float(r["rois"]) for r in rows)])
+    if trows:
+        s.table("中值濾波與混合式串接的延遲(筆電 CPU,測試集 103 張,同一輪交替)", ["版本", "每張 ms", "第二階段 ms", "中位數 ms", "p90 ms", "每個 ROI 模型數"],
+                lambda first: trows, [None, "0.0", "0.0", "0.0", "0.0", "0.00"],
+                note="來源: compare_results/deploy_eval/time3_*/timing.csv;準確度見上方部署變體表與 EXPERIMENTS.md「中值濾波與混合式串接的部署評分」")
+    path = base / "lines_robust" / "breakdown.csv"
+    if path.exists():
+        rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+        s.table("第一階段參考線對畫質變化的穩定度(開發集 303 張 476 側;牙位 = GT 頦孔 + 當次參考線;改變 = 和原圖的答案不同)",
+                ["條件", "牙位改變(側)", "參考線不見", "整條線跳到別顆牙", "線小幅移動跨過邊界"],
+                lambda first: [[r["condition"], int(r["changed"]), int(r["missing"]), int(r["jump"]), int(r["small"])] for r in rows],
+                [None, "0", "0", "0", "0"], note="來源: compare_results/deploy_eval/lines_robust/breakdown.csv(stage1_lines_robust.py、lines_breakdown.py,11/14,探索性)")
+    path = base / "lines_robust" / "flag_summary.csv"
+    if path.exists():
+        rows = [r for r in csv.DictReader(open(path, newline="", encoding="utf-8")) if r["condition"] == "mean"]
+        s.table("編號不穩時的靜默改變率(11 個條件平均;靜默改變 = 牙位和原圖不同又沒被轉介;差 = 對現行旗標)",
+                ["旗標", "平均靜默改變率", "差", "95% CI 下", "95% CI 上", "原圖轉介率"],
+                lambda first: [[r["flag"], float(r["silent"]), float(r["diff"]), float(r["lo"]), float(r["hi"]), float(r["clean_refer"])] for r in rows],
+                [None, D4, D4, D4, D4, PCT], note="來源: compare_results/deploy_eval/lines_robust/flag_summary.csv(stage1_flag_robust.py);flipP = 翻轉前後牙位不同,flipJ = 參考線跳動 > 30 px")
+    path = base / "score_flipflag" / "system_compare.csv"
+    if path.exists():
+        rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+        s.table("翻轉一致性旗標: 測試集系統層級(5 種子;diff 列為 加旗標 − 正式部署,以全景片 bootstrap)",
+                ["標註", "版本", "轉介", "自動回答中正確", "靜默錯誤", "差", "95% CI 下", "95% CI 上", "p"],
+                lambda first: [[r["labels"], r["run"]] + [float(r[k]) if r.get(k) else None for k in ("refer", "auto_acc", "silent", "diff", "lo", "hi", "p")] for r in rows],
+                [None, None, PCT, PCT, PCT, D4, D4, D4, "0.000"], note="來源: compare_results/deploy_eval/score_flipflag/system_compare.csv(flipflag_compare.py)")
+    path = base / "score_official" / "bottleneck.csv"
+    if path.exists():
+        rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+        s.table("正式部署版本的結果拆解: 每一側卡在哪(測試集已標註的側 × 5 種子)", ["標註", "類別", "細項", "佔全部的側", "側數(5 種子平均)"],
+                lambda first: [[r["labels"], r["group"], r["detail"], float(r["share"]), float(r["sides"])] for r in rows],
+                [None, None, None, PCT, "0.0"], note="來源: compare_results/deploy_eval/score_official/bottleneck.csv(bottleneck.py,11/14)")
+    path = base / "score_flipflag" / "combo.csv"
+    if path.exists():
+        rows = [r for r in csv.DictReader(open(path, newline="", encoding="utf-8")) if r.get("refer")]
+        s.table("轉介策略合用: 翻轉一致性旗標 + 邊界距離(測試集已標註的側,5 種子平均;探索性)",
+                ["標註", "策略", "轉介", "自動回答中正確", "靜默錯誤", "異常側被轉介 / 29", "正常牙被轉介"],
+                lambda first: [[r["labels"], r["policy"], float(r["refer"]), float(r["auto_acc"]), float(r["silent"]), float(r["abnormal_referred"]), float(r["normal_referred"])] for r in rows],
+                [None, None, PCT, PCT, PCT, "0.0", "0.0"], note="來源: compare_results/deploy_eval/score_flipflag/combo.csv(referral_combo.py);配對差與 CI 見 combo.md")
+    trows = []
+    for d, label, rounds in (("time4_base", "正式部署", "gh"), ("time4_flip", "+ 翻轉一致性旗標(第一階段多跑一次)", "gh"),
+                             ("time5_argmax", "原本的 torch.argmax(11/14 下午另一輪,整體較慢)", "ij"), ("time5_fast", "快速 argmax(預設;同一輪)", "ij")):
+        for r_ in rounds:
+            path = base / f"{d}_{r_}" / "timing.csv"
+            if path.exists():
+                rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+                trows.append([f"{label} ({r_})"] + [statistics.mean(float(r[k]) for r in rows) for k in ("wall_ms", "stage1", "stage2_model")]
+                             + [statistics.median(float(r["wall_ms"]) for r in rows)])
+    if trows:
+        s.table("翻轉一致性旗標與快速 argmax 的延遲(筆電 CPU,測試集 103 張;g / h 與 i / j 是不同時段,只能同一輪內比較)", ["版本", "每張 ms", "第一階段 ms", "第二階段 ms", "中位數 ms"],
+                lambda first: trows, [None, "0.0", "0.0", "0.0", "0.0"], note="來源: compare_results/deploy_eval/time4_*、time5_*/timing.csv")
+    path = ROOT / "compare_results" / "kfold_pano_mf_559" / "policy_pareto.csv"
+    if path.exists():
+        rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+        s.table("串接式策略 × 運算量(測試集 FP32 遮罩,5 種子;差 = 對現行 r34 c2→5;r384 = R34/384,slim = 瘦身解碼器)",
+                ["策略", "每個 ROI GMAC", "命中", "命中差", "95% CI 下", "95% CI 上", "mf Dice", "mf Dice 差"],
+                lambda first: [[r["policy"], float(r["gmac"]), float(r["mf_hit_1R"]), float(r["mf_hit_1R_diff"]), float(r["mf_hit_1R_lo"]),
+                                float(r["mf_hit_1R_hi"]), float(r["mf_dice"]), float(r["mf_dice_diff"])] for r in rows],
+                [None, "0.0", D4, D4, D4, D4, D4, D4], note="來源: compare_results/kfold_pano_mf_559/policy_pareto.csv(探索性,在測試集上比較多個策略)")
+    path = base / "robust" / "defense.csv"
+    if path.exists():
+        rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+        s.table("合成畫質變化下的命中與不用重訓的補救(測試集 137 ROI,INT8 串接式聯集,5 種子;差 = 對原圖不處理)",
+                ["條件", "前處理", "命中", "命中差", "95% CI 下", "95% CI 上", "mf Dice"],
+                lambda first: [[r["condition"], r["remedy"], float(r["hit"]), float(r["hit_diff"]), float(r["hit_lo"]), float(r["hit_hi"]), float(r["mf_dice"])] for r in rows],
+                [None, None, D4, D4, D4, D4, D4], note="來源: compare_results/deploy_eval/robust/defense.csv;全部 18 種變化見 robust/results.csv")
+    runs = []
+    for name in ("int8_a", "fp32_a", "int8_b", "fp32_b"):
+        path = base / f"time_tufts_{name}" / "timing.csv"
+        if path.exists():
+            rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+            runs.append([name, statistics.mean(float(r["wall_ms"]) for r in rows), statistics.mean(float(r["stage2_model"]) for r in rows),
+                         statistics.mean(float(r["stage1"]) for r in rows), statistics.mean(float(r["flags"]) for r in rows)])
+    if runs:
+        s.table("整條流程 INT8 vs FP32(Tufts 50 張 ×1.58,交替兩次)", ["執行", "每張平均 ms", "第二階段 ms", "第一階段 ms", "旗標 ms"],
+                lambda first: runs, [None, "0.0", "0.0", "0.0", "0.0"], note="來源: compare_results/deploy_eval/time_tufts_*/timing.csv")
+    for folder, title, key in (("unet_bench_", "只量 U-Net: INT8 vs FP32(batch 1、512×512 隨機輸入)", "precision"),
+                               ("sparse_bench_", "2:4 稀疏在 CPU 上的速度(OpenVINO,batch 1、512×512 隨機輸入)", "variant")):
+        for d in sorted(base.glob(folder + "*")):
+            rows = list(csv.DictReader(open(d / "per_iter.csv", newline="", encoding="utf-8")))
+            names = list(dict.fromkeys(r[key] for r in rows))
+            med = {n: statistics.median(float(r["ms"]) for r in rows if r[key] == n) for n in names}
+            ref = med[names[0]]
+            s.table(title, ["版本", "中位數 ms", f"相對 {names[0]}"],
+                    lambda first, names=names, med=med, ref=ref: [[n, med[n], ref / med[n]] for n in names],
+                    [None, "0.0", "0.00"], note=f"來源: {(d / 'per_iter.csv').relative_to(ROOT)}")
+    s.finish()
+
+
 def main():
     wb = Workbook()
     wb.remove(wb.active)
-    for build in (overview, pano, pano_more, pano_rerun, tooth_position, seeds,diff_ci, details, ablation, learning, batches, agreement, visibility, preprocessing, others, evidence, appendix):
+    for build in (overview, pano, pano_more, hardware, deployment, pano_rerun, tooth_position, quality, seeds,diff_ci, details, ablation, learning, batches, agreement, visibility, preprocessing, others, evidence, appendix):
         build(wb)
     # 開啟時重新計算所有公式
     wb.calculation.fullCalcOnLoad = True
