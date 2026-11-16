@@ -6,6 +6,8 @@
 - 另報 OpenVINO 實際執行的精度(FP32 模型在沒有 AMX 的 CPU 上應為 f32)。
 - 輸出: compare_results/deploy_eval/unet_bench_<主機>/(per_iter.csv、summary.md)。
 """
+import deployment.no_throttle as no_throttle  # 2026-11-16: 背景執行時 Windows 節能排程會讓第一階段慢約 1.5 倍
+no_throttle.disable()
 import argparse
 import csv
 import platform

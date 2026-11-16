@@ -7,6 +7,7 @@
   pcore = SCHEDULING_CORE_TYPE=PCORE_ONLY(兩個模型都 4 個執行緒、只用 P 核心)
   pin   = ENABLE_CPU_PINNING(執行緒數同 any,OpenVINO 把每個執行緒綁在固定核心上)
   ecore = SCHEDULING_CORE_TYPE=ECORE_ONLY(兩個模型都 8 個執行緒、只用 E 核心;診斷用)
+  t8    = 第一階段 INFERENCE_NUM_THREADS=8(預設 12;約 4 P + 4 E),U-Net 不變(4)(11/15 新方向之一)
   (先試過用行程親和性限制核心,但 OpenVINO 不看親和性、照樣開 12 個執行緒,會超額,所以改用 OpenVINO 自己的設定)
 """
 import argparse
@@ -17,17 +18,22 @@ from pathlib import Path
 import numpy as np
 import openvino as ov
 
+import deployment.no_throttle as no_throttle
+
+THROTTLE_OFF = no_throttle.disable()   # 2026-11-16: 背景執行時 Windows 節能排程會讓第一階段慢約 1.5 倍
+
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument("out")
 parser.add_argument("--seconds", type=float, default=180)
-parser.add_argument("--mode", choices=["any", "pin", "pcore", "ecore"], default="any")
+parser.add_argument("--mode", choices=["any", "pin", "pcore", "ecore", "t8"], default="any")
 args = parser.parse_args()
 cfg = {"PERFORMANCE_HINT": "LATENCY", **{"any": {}, "pin": {"ENABLE_CPU_PINNING": True}, "pcore": {"SCHEDULING_CORE_TYPE": "PCORE_ONLY"},
-                                          "ecore": {"SCHEDULING_CORE_TYPE": "ECORE_ONLY"}}[args.mode]}
+                                          "ecore": {"SCHEDULING_CORE_TYPE": "ECORE_ONLY"}, "t8": {}}[args.mode]}
+cfg1 = {**cfg, **({"INFERENCE_NUM_THREADS": 8} if args.mode == "t8" else {})}   # 只改第一階段
 core = ov.Core()
 rng = np.random.default_rng(0)
-stage1_c = core.compile_model(str(next((ROOT / "dental_project/train_success_replica3/weights/best_openvino_model").glob("*.xml"))), "CPU", cfg)
+stage1_c = core.compile_model(str(next((ROOT / "dental_project/train_success_replica3/weights/best_openvino_model").glob("*.xml"))), "CPU", cfg1)
 unet_c = core.compile_model(str(ROOT / "compare_results/int8_pano/models/s0_fold0_int8.xml"), "CPU", cfg)
 threads = f"{stage1_c.get_property('INFERENCE_NUM_THREADS')}/{unet_c.get_property('INFERENCE_NUM_THREADS')}"
 stage1, unet = stage1_c.create_infer_request(), unet_c.create_infer_request()

@@ -103,6 +103,7 @@ class TorchUNet:
         return {cls: pred == c + 1 for c, cls in NAMES.items()}
 
 
+THROTTLE_OFF = False  # 2026-11-16: main() 預設呼叫 no_throttle.disable()(--allow-throttle 可關)
 DEVICE = "cpu"  # 2026-11-15 --device: cpu = OpenVINO(正式部署版本);cuda = 三個模型都用 PyTorch 在 NVIDIA GPU 上跑
 
 
@@ -364,7 +365,9 @@ def environment():
 
 def run_time(args, out):
     env = environment()
-    print(f"環境: 電源 {env['power']}、電量 {env['battery']}%{'(充電中)' if env['charging'] else ''}、電源模式 {env['mode']}、開始前 CPU 使用率 {env['cpu_load']}%", flush=True)
+    env["throttle_off"] = int(THROTTLE_OFF)
+    print(f"環境: 電源 {env['power']}、電量 {env['battery']}%{'(充電中)' if env['charging'] else ''}、電源模式 {env['mode']}、開始前 CPU 使用率 {env['cpu_load']}%、"
+          f"power throttling {'已關閉' if THROTTLE_OFF else '沒有關閉(背景執行可能變慢)'}", flush=True)
     if env["power"] == "battery" and not args.allow_battery:
         raise SystemExit("筆電沒有接電源(電池供電時每張會慢到約 4 倍),不計時。接上電源後再跑;真的要量請加 --allow-battery。")
     # 2026-11-15(使用者要求): 充電中也拒絕;11/14 time5 那輪是接上電源後在充電,整體偏慢(crop / preprocess 是正常的 1.8 / 1.3 倍)
@@ -400,7 +403,7 @@ def run_time(args, out):
              f"每個 ROI 平均跑 {sum(r['models_run'] for r in rows) / max(1, sum(r['rois'] for r in rows)):.2f} 個 {args.precision.upper()} U-Net;"
              f"第一階段與 32 類模型 {dict(pt='PyTorch CUDA FP32' if DEVICE == 'cuda' else 'PyTorch CPU', ov_fp32='OpenVINO FP32', ov_int8='OpenVINO INT8', ov_mixed='第一階段 OpenVINO FP32、32 類 INT8')[args.yolo] if not TEETH_OV else f'第一階段 {TEETH_OV}、32 類 INT8'};串接式輸出 {CASCADE_OUT}{f';先跑 {FIRST_TAG}' if FIRST_TAG else ''}{f';前處理 {PRE}' if PRE else ''};U-Net 執行緒 {args.threads or '預設'}",
              f"- 環境: 開始 {env['time']},電源 {env['power']}、電量 {env['battery']}%{'(充電中)' if env['charging'] else ''}、電源模式 {env['mode']}、"
-             f"開始前 CPU 使用率 {env['cpu_load']}%;結束時電源 {environment()['power']}",
+             f"開始前 CPU 使用率 {env['cpu_load']}%、power throttling {'已關閉' if env['throttle_off'] else '沒有關閉'};結束時電源 {environment()['power']}",
              f"- 每張全景片牆鐘時間 平均 {statistics.mean(r['wall_ms'] for r in rows):.1f} ms、中位數 {statistics.median(r['wall_ms'] for r in rows):.1f} ms、"
              f"p90 {np.percentile([r['wall_ms'] for r in rows], 90):.1f} ms", "",
              "| 階段 | 平均 ms | 中位數 ms | 佔比 |", "| --- | --- | --- | --- |"]
@@ -647,8 +650,13 @@ def main():
     parser.add_argument("--allow-charging", action="store_true", help="計時: 充電中也照量(預設拒絕;充電中偏慢,結果要註明)")
     parser.add_argument("--flip-flag", action="store_true", help="多跑一次水平翻轉的第一階段,兩次的牙位不同就轉介(預設關;第一階段時間約 2 倍)")
     parser.add_argument("--baseline", help="評分: 另一次部署評分的資料夾名稱(compare_results/deploy_eval/ 底下),逐項配對比較")
+    # 2026-11-16(使用者同意): 在背景視窗跑久了 Windows 會把行程節能排程(EcoQoS),第一階段慢約 1.5 倍;預設一開始就關掉節流
+    parser.add_argument("--allow-throttle", action="store_true", help="不要關掉 Windows 的 power throttling(2026-11-16 以前的行為;背景執行時第一階段會慢約 1.5 倍)")
     args = parser.parse_args()
-    global CASCADE_OUT, TEETH_OV, UNET_WEIGHTS, TEETH_IMGSZ, T32_IMGSZ, FIRST_TAG, PRE, FLIP_FLAG, MARGIN_REFER, FAST_ARGMAX, DEVICE
+    global CASCADE_OUT, TEETH_OV, UNET_WEIGHTS, TEETH_IMGSZ, T32_IMGSZ, FIRST_TAG, PRE, FLIP_FLAG, MARGIN_REFER, FAST_ARGMAX, DEVICE, THROTTLE_OFF
+    if not args.allow_throttle:
+        import deployment.no_throttle as no_throttle
+        THROTTLE_OFF = no_throttle.disable()
     DEVICE = args.device
     if DEVICE == "cuda":
         if not torch.cuda.is_available():

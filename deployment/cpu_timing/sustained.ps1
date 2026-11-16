@@ -5,11 +5,12 @@
 #   .\sustained.ps1 -Tag single_1      .\sustained.ps1 -Tag dual_1      .\sustained.ps1 -Tag single_2      .\sustained.ps1 -Tag dual_2
 # 11/15 加 -Mode any|pin|pcore|ecore(見 sustained_bench.py)與 P / E 核心各自的使用率(每 2 秒,原始計數差分);一次跑完全部: .\sustained_cores.ps1
 # 輸出: compare_results\deploy_eval\sustained\<Tag>_calls.csv(每次呼叫)、<Tag>_sensors.csv(每 2 秒);彙整: python sustained_report.py
-param([Parameter(Mandatory = $true)][string]$Tag, [int]$Seconds = 180, [int]$CoolC = 55, [int]$CoolMaxMinutes = 8, [ValidateSet("any", "pin", "pcore", "ecore")][string]$Mode = "any")
+param([Parameter(Mandatory = $true)][string]$Tag, [int]$Seconds = 180, [int]$CoolC = 55, [int]$CoolMaxMinutes = 8, [ValidateSet("any", "pin", "pcore", "ecore", "t8")][string]$Mode = "any")
 $ErrorActionPreference = "Continue"
 $env:PYTHONUTF8 = "1"
 Set-Location $PSScriptRoot
 $py = if ($env:PYTHON) { $env:PYTHON } else { "python" }   # 用 $env:PYTHON 指定虛擬環境的 python.exe
+$env:PYTHONPATH = (Resolve-Path "$PSScriptRoot\..\..").Path   # 讓 python 找得到 deployment.no_throttle
 $outDir = Join-Path $PSScriptRoot "..\..\compare_results\deploy_eval\sustained"
 New-Item -ItemType Directory -Force $outDir | Out-Null
 Add-Type -AssemblyName System.Windows.Forms

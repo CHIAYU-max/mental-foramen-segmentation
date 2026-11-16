@@ -10,6 +10,7 @@ $ErrorActionPreference = "Continue"
 $env:PYTHONUTF8 = "1"
 Set-Location $PSScriptRoot
 $py = if ($env:PYTHON) { $env:PYTHON } else { "python" }   # 用 $env:PYTHON 指定虛擬環境的 python.exe
+$env:PYTHONPATH = (Resolve-Path "$PSScriptRoot\..\..").Path   # 讓 python 找得到 deployment.no_throttle
 $outDir = Join-Path $PSScriptRoot "..\..\compare_results\deploy_eval\cpu_probe"
 New-Item -ItemType Directory -Force $outDir | Out-Null
 $csv = Join-Path $outDir "probe_v2.csv"   # 11/15 加了螢幕數、亮度、獨顯狀態;欄位不同,另開新檔(舊的 probe.csv 保留)

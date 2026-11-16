@@ -319,12 +319,12 @@ def low_bit():
 
 
 def deploy_latency():
-    # 筆電 i5-13500H + RTX 4050,測試集 103 張;同一時段內才比(time6: 11/15 00:53–01:42;time8: 10:41–10:49)
+    # 筆電 i5-13500H + RTX 4050,測試集 103 張;同一時段內才比(time9: 11/16 09:50–10:31,關掉 Windows 背景節流;time8: 11/15 10:41–10:49)
     s = Svg(860, 470, "Each speed-up in the deployed pipeline, measured in one session",
-            "Laptop, mean wall-clock time per radiograph, 103 test radiographs, three rounds. Absolute times vary about ±25% across sessions", "Latency per radiograph by configuration")
-    rows1 = [("Integrated pipeline (13 Nov)", 1399, "c", "1399 ms"), ("+ 32-class model INT8, union", 1205, "c", "1205 ms"),
-             ("+ box-only mask upsampling", 1088, "c", "1088 ms"), ("+ 32-class model at 640 px", 1023, "c", "1023 ms"),
-             ("+ fast argmax (deployed)", 929, "a", "929 ms"), ("Deployed, U-Net FP32 instead of INT8", 2255, "b", "2255 ms (INT8: 2.43× faster)")]
+            "Laptop, mean wall-clock time per radiograph, 103 test radiographs, three rounds, Windows power throttling disabled for the process", "Latency per radiograph by configuration")
+    rows1 = [("Integrated pipeline (13 Nov)", 1216, "c", "1216 ms"), ("+ 32-class model INT8, union", 1063, "c", "1063 ms"),
+             ("+ box-only mask upsampling", 940, "c", "940 ms"), ("+ 32-class model at 640 px", 890, "c", "890 ms"),
+             ("+ fast argmax (deployed)", 802, "a", "802 ms"), ("Deployed, U-Net FP32 instead of INT8", 1879, "b", "1879 ms (INT8: 2.34× faster)")]
     s.text(24, 84, "Session 1: CPU (OpenVINO)", "t bold")
     b = hbars(s, rows1, 300, 700, 94, 0, 2400, [0, 500, 1000, 1500, 2000], lambda t: f"{t}", 32)
     rows2 = [("CPU, deployed (INT8)", 800, "a", "800 ms"), ("RTX 4050, U-Net FP32", 217, "b", "217 ms"), ("RTX 4050, U-Net FP16", 194, "b", "194 ms")]
@@ -334,27 +334,24 @@ def deploy_latency():
     s.save("deploy_latency")
 
 
-def cpu_scheduling():
-    # sustained_cores.ps1(11/15): 每圈 = 第一階段 FP32 ×1 + U-Net INT8 ×5,15 秒一格的第一階段中位數
-    t = [7.5 + 15 * i for i in range(12)]
-    runs = [("Default, run 1", "a", [207, 205, 213, 214, 229, 233, 233, 230, 234, 231, 231, 234]),
-            ("Default, run 3", "b", [209, 210, 216, 217, 231, 236, 241, 229, 296, 295, 294, 297]),
-            ("Threads pinned", "c", [305, 302, 312, 313, 306, 333, 320, 312, 323, 308, 323, 314])]
-    s = Svg(860, 372, "On a hybrid laptop CPU, the scheduler decides the latency",
-            "i5-13500H (4 P-cores + 8 E-cores), stage-1 model FP32, 3-minute load, same settings in every run", "Stage-1 latency over time in three runs")
-    s.legend(24, 74, [(name, g) for name, g, _ in runs])
-    x, y = panel(s, 68, 100, 760, 214, (0, 180), (180, 350), [0, 30, 60, 90, 120, 150, 180], [200, 250, 300, 350], lambda v: f"{v} s", lambda v: f"{v} ms")
-    for _, g, v in runs:
-        series(s, x, y, list(zip(t, v)), g)
-    s.text(x(178), y(199), "Run 3 after 120 s: threads move to E-cores (P use 46→38%, E 27→40%)", "t small", "end")
-    s.text(x(178), y(187), "Frequency and temperature unchanged", "s small", "end")
-    s.text(448, 356, "Time under load (15-second medians)", "s small", "middle")
-    s.save("cpu_scheduling")
-
+def cpu_throttling():
+    # throttle_long.ps1(11/16): 新開的最小化背景視窗,每 4 分鐘一次 15 秒基準,交替 正常 / 關掉 power throttling
+    normal = [(0.1, 223.2), (8.1, 321.9), (16.1, 336.8), (24.1, 321.7), (32.1, 322.3)]
+    opt_out = [(4.1, 194.1), (12.1, 189.4), (20.1, 226.6), (28.1, 234.0)]
+    s = Svg(860, 372, "A background window slows the laptop down after a few minutes",
+            "i5-13500H, stage-1 model FP32, 15-second benchmark every 4 minutes in a minimized window", "Stage-1 latency against time spent in a background window")
+    s.legend(24, 74, [("Default", "b"), ("Power throttling disabled for the process", "a")])
+    x, y = panel(s, 68, 100, 760, 214, (-1, 34), (150, 360), [0, 8, 16, 24, 32], [150, 200, 250, 300, 350], lambda v: f"{v} min", lambda v: f"{v} ms")
+    series(s, x, y, normal, "b")
+    series(s, x, y, opt_out, "a")
+    s.text(x(9), y(285), "Windows switches the process to efficiency scheduling (EcoQoS)", "t small", "start")
+    s.text(x(33), y(165), "The 4-thread U-Net stays at 46–52 ms in both", "s small", "end")
+    s.text(448, 356, "Minutes in a background window", "s small", "middle")
+    s.save("cpu_throttling")
 
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     for make in (pipeline, hit_threshold, referral, compute, learning_curve, preprocessing, ablation, roofline, accelerator,
-                 system_referral, low_bit, deploy_latency, cpu_scheduling):
+                 system_referral, low_bit, deploy_latency, cpu_throttling):
         make()
     print(sorted(p.name for p in OUT.glob("*.svg")))

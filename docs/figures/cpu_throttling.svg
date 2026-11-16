@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 372" role="img" aria-label="Stage-1 latency against time spent in a background window"><style>
+.bg{fill:#fcfcfb}.t{fill:#0b0b0b}.s{fill:#52514e}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.edge{stroke:#8a8983}
+.a{--c:#2a78d6}.b{--c:#eb6834}.c{--c:#6e6d68}
+.fill{fill:var(--c)}.line{stroke:var(--c)}.ring{stroke:#fcfcfb}.tint{fill:var(--c);fill-opacity:.12}.card{fill:#fcfcfb}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.title{font-size:16px;font-weight:600}.small{font-size:12px}.bold{font-weight:600}
+@media (prefers-color-scheme:dark){
+.bg,.card{fill:#1a1a19}.t{fill:#f0efec}.s{fill:#c3c2b7}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.edge{stroke:#8a8983}
+.a{--c:#3987e5}.b{--c:#d95926}.c{--c:#a9a89f}.ring{stroke:#1a1a19}}
+</style><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a8983"/></marker></defs><rect class="bg" width="860" height="372" rx="8"/>
+<text x="24.0" y="30.0" class="t title" text-anchor="start">A background window slows the laptop down after a few minutes</text>
+<text x="24.0" y="50.0" class="s small" text-anchor="start">i5-13500H, stage-1 model FP32, 15-second benchmark every 4 minutes in a minimized window</text>
+<rect x="24" y="64" width="11" height="11" rx="2" class="b fill"/>
+<text x="40.0" y="74.0" class="s small" text-anchor="start">Default</text>
+<rect x="97" y="64" width="11" height="11" rx="2" class="a fill"/>
+<text x="113.0" y="74.0" class="s small" text-anchor="start">Power throttling disabled for the process</text>
+<line x1="68.0" y1="314.0" x2="828.0" y2="314.0" class="grid" stroke-width="1" />
+<text x="60.0" y="318.0" class="s small" text-anchor="end">150 ms</text>
+<line x1="68.0" y1="263.0" x2="828.0" y2="263.0" class="grid" stroke-width="1" />
+<text x="60.0" y="267.0" class="s small" text-anchor="end">200 ms</text>
+<line x1="68.0" y1="212.1" x2="828.0" y2="212.1" class="grid" stroke-width="1" />
+<text x="60.0" y="216.1" class="s small" text-anchor="end">250 ms</text>
+<line x1="68.0" y1="161.1" x2="828.0" y2="161.1" class="grid" stroke-width="1" />
+<text x="60.0" y="165.1" class="s small" text-anchor="end">300 ms</text>
+<line x1="68.0" y1="110.2" x2="828.0" y2="110.2" class="grid" stroke-width="1" />
+<text x="60.0" y="114.2" class="s small" text-anchor="end">350 ms</text>
+<text x="89.7" y="333.0" class="s small" text-anchor="middle">0 min</text>
+<text x="263.4" y="333.0" class="s small" text-anchor="middle">8 min</text>
+<text x="437.1" y="333.0" class="s small" text-anchor="middle">16 min</text>
+<text x="610.9" y="333.0" class="s small" text-anchor="middle">24 min</text>
+<text x="784.6" y="333.0" class="s small" text-anchor="middle">32 min</text>
+<line x1="68.0" y1="314.0" x2="828.0" y2="314.0" class="axis" stroke-width="1" />
+<path d="M91.9,239.4L265.6,138.8L439.3,123.6L613.0,139.0L786.7,138.4" class="b line" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+<circle cx="91.9" cy="239.4" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="265.6" cy="138.8" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="439.3" cy="123.6" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="613.0" cy="139.0" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="786.7" cy="138.4" r="5" class="b fill ring" stroke-width="2"/>
+<path d="M178.7,269.1L352.5,273.8L526.2,235.9L699.9,228.4" class="a line" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+<circle cx="178.7" cy="269.1" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="352.5" cy="273.8" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="526.2" cy="235.9" r="5" class="a fill ring" stroke-width="2"/>
+<circle cx="699.9" cy="228.4" r="5" class="a fill ring" stroke-width="2"/>
+<text x="285.1" y="176.4" class="t small" text-anchor="start">Windows switches the process to efficiency scheduling (EcoQoS)</text>
+<text x="806.3" y="298.7" class="s small" text-anchor="end">The 4-thread U-Net stays at 46–52 ms in both</text>
+<text x="448.0" y="356.0" class="s small" text-anchor="middle">Minutes in a background window</text></svg>

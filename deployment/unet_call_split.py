@@ -4,6 +4,8 @@ deploy_pipeline.Int8UNet.__call__ = 縮放到 512 → OpenVINO INT8 推論 → l
 量每一段的時間,看推論以外的前後處理佔多少。ROI 尺寸取測試集常見的大小(約 400 × 520)與較大的(600 × 800)。
 輸出: compare_results/deploy_eval/unet_call_split_<主機>/summary.md
 """
+import deployment.no_throttle as no_throttle  # 2026-11-16: 背景執行時 Windows 節能排程會讓第一階段慢約 1.5 倍
+no_throttle.disable()
 import platform
 import statistics
 import time

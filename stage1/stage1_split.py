@@ -1,6 +1,8 @@
 """2026-11-13 第一階段在筆電 CPU 上的時間拆分(模型推論 vs ultralytics 後處理 vs 專案自己的後處理),Tufts ×1.58 影像,不需要病人影像。
 輸出: compare_results/deploy_eval/stage1_split_<主機>/per_image.csv
 """
+import deployment.no_throttle as no_throttle  # 2026-11-16: 背景執行時 Windows 節能排程會讓第一階段慢約 1.5 倍
+no_throttle.disable()
 import csv
 import platform
 import sys

@@ -11,6 +11,10 @@ from pathlib import Path
 import numpy as np
 import openvino as ov
 
+import deployment.no_throttle as no_throttle
+
+THROTTLE_OFF = no_throttle.disable()   # 2026-11-16: 背景執行時 Windows 節能排程會讓第一階段慢約 1.5 倍
+
 ROOT = Path(__file__).resolve().parents[2]
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 15
 core = ov.Core()

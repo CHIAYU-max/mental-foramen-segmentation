@@ -144,9 +144,9 @@ correct, 6.4% silent errors. The foramen hit rate is about 1 point below the ful
 
 ![Latency per radiograph by configuration](docs/figures/deploy_latency.svg)
 
-- Speed: about 0.9 s per radiograph on a laptop CPU (i5-13500H, 917–937 ms over three rounds in one session) and about
+- Speed: about 0.8 s per radiograph on a laptop CPU (i5-13500H, 786–807 ms over three rounds in one session) and about
   0.2 s on its RTX 4050 (the GPU version is scored the same as the CPU version, except a canal Dice 0.004–0.007 lower).
-  INT8 makes the U-Net 3.8× faster and the whole pipeline 2.4× faster. 48% of the CPU time is the U-Net and 39% stage 1.
+  INT8 makes the U-Net 3.0× faster and the whole pipeline 2.3× faster. 50% of the CPU time is the U-Net and 38% stage 1.
 - What did not make it in: INT8 for stage 1 costs 2–4.5 points of tooth position, and mixed precision, accuracy-aware
   quantization and distillation QAT did not fix that without keeping most blocks in FP32 (`stage1/stage1_int8.py`);
   stage 1 below 1024 px fails the same check (`stage1/stage_imgsz.py`); 2:4 sparse weights are not faster on the CPU
@@ -162,12 +162,15 @@ correct, 6.4% silent errors. The foramen hit rate is about 1 point below the ful
   filter recovers most of it without hurting clean images, and is kept as an option (`--pre median3`) because the data
   has no such noise (`analysis/robust_stress.py`, `analysis/robust_defense.py`).
 - Measuring latency on a laptop: wall-clock times of the same configuration varied by about ±25% between sessions, while
-  rounds within a session agreed to 1–4%. The cause is the hybrid CPU: by default OpenVINO runs stage 1 with 12 threads over
-  the P- and E-cores, and Windows sometimes moves threads to the E-cores (2–2.4× slower here), even in the middle of a run.
-  Pinning threads or restricting them to the P-cores removes the switching but is 12–14% slower on average. All
-  comparisons above are therefore made within one session (`deployment/cpu_timing/`).
+  rounds within a session agreed to 1–4%. The main cause was Windows power throttling (EcoQoS): a process started from a
+  background window is moved to efficiency scheduling after a few minutes, and the 12-thread stage-1 model slows from about
+  210 to 330 ms while the 4-thread U-Net does not change. The pipeline and the timing scripts therefore opt out of power
+  throttling at start-up (`deployment/no_throttle.py`; `--allow-throttle` keeps the old behaviour), which also matters if
+  the pipeline runs as a background service. Thread placement across the P- and E-cores adds a smaller variation (2–3%);
+  pinning threads or restricting them to the P-cores is 12–14% slower on average, so OpenVINO's defaults are kept. All
+  comparisons above are made within one session (`deployment/cpu_timing/`).
 
-![Stage-1 latency over time in three runs](docs/figures/cpu_scheduling.svg)
+![Stage-1 latency against time spent in a background window](docs/figures/cpu_throttling.svg)
 
 ## 8. Hardware
 
@@ -223,7 +226,7 @@ Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency acr
 | `deployment/deploy_pipeline.py`, `deployment/fast_masks.py`, `deployment/score_from_csv.py` | Deployed pipeline: scoring, timing, CPU (OpenVINO) and GPU (PyTorch) versions |
 | `deployment/bottleneck.py`, `deployment/unet_call_split.py`, `deployment/unet_int8_bench.py`, `deployment/pipeline_timing.py` | Where accuracy and time are lost; U-Net call breakdown; INT8 against FP32 |
 | `deployment/int8_quant.py`, `deployment/int8_ensemble.py`, `deployment/cascade_infer.py`, `deployment/single_small_lcc.py`, `deployment/distill_ensemble.py` | INT8 quantization, the cascade, a small single model, ensemble distillation |
-| `deployment/cpu_timing/` | Sustained-load and core-scheduling benchmarks for latency on hybrid laptop CPUs (PowerShell + Python) |
+| `deployment/no_throttle.py`, `deployment/cpu_timing/` | Opting out of Windows power throttling; sustained-load, core-scheduling and background-throttling benchmarks for laptop latency (PowerShell + Python) |
 | `analysis/policy_pareto.py`, `analysis/robust_stress.py`, `analysis/robust_remedy.py`, `analysis/robust_defense.py` | Compute against accuracy; synthetic stress tests and inference-time defenses |
 | `hardware/roofline_profile.py`, `hardware/roofline_workload.py`, `hardware/accel_model.py`, `hardware/accel_explore.py`, `hardware/accel_lowbit.py` | Rooflines, workload characterization and the analytical accelerator model, including bit width and 2:4 sparsity |
 | `hardware/qat_fx.py`, `hardware/qat_int4.py`, `hardware/sparse24.py`, `hardware/sparse_int8_verify.py`, `hardware/fx_diag.py`, `hardware/fx_seeds.py` | Quantization-aware training (INT8, 4-bit), 2:4 sparsity, integer and fixed-point verification |
