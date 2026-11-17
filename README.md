@@ -7,8 +7,20 @@ with dentists at Linkou Chang Gung Memorial Hospital.
 
 The radiographs and annotations are clinical data and are **not** included. This repository holds the code only.
 
-The sections follow the research flow: data and evaluation, the segmentation model, design choices, uncertainty,
-tooth position, deployment, and hardware.
+## Contents
+
+The sections follow the research flow:
+
+1. [Pipeline](#1-pipeline): the two-stage chain from radiograph to tooth position or referral
+2. [Data and evaluation](#2-data-and-evaluation): dataset, splits, hit-rate definition
+3. [Segmentation model: U-Net against YOLO-seg](#3-segmentation-model-u-net-against-yolo-seg): main results, hit-threshold sensitivity, visibility
+4. [Design choices](#4-design-choices): ablation, learning curve, preprocessing, image-quality fixes
+5. [Uncertainty and referral](#5-uncertainty-and-referral): ensemble disagreement as a referral score
+6. [Tooth position](#6-tooth-position): Tebo & Telford rule, missing-tooth and numbering flags, system-level referral
+7. [Deployment](#7-deployment): INT8 cascade, latency, compute against accuracy, robustness, laptop timing
+8. [Hardware](#8-hardware): rooflines, accelerator model, low-bit and 2:4 sparsity, fixed point
+
+Reference: [Main scripts](#main-scripts) · [Layout](#layout) · [Credits](#credits)
 
 ## 1. Pipeline
 
@@ -28,7 +40,7 @@ panoramic radiograph
                                  └─ referral: numbering flags, boundary margin      position/position_referral.py
 ```
 
-The deployed version of the whole chain is one script, `deployment/deploy_pipeline.py` (section 6).
+The deployed version of the whole chain is one script, `deployment/deploy_pipeline.py` ([section 7](#7-deployment)).
 
 ## 2. Data and evaluation
 
