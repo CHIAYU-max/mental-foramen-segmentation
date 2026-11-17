@@ -42,6 +42,29 @@ NORM_TYPES = (nn.BatchNorm1d, nn.BatchNorm2d, nn.GroupNorm, nn.LayerNorm)
 # --------------------------------------------------------------------------
 # Model construction
 # --------------------------------------------------------------------------
+def fuse_unet_bn(model):
+    """2026-11-15: fold every BatchNorm2d into the preceding Conv2d (same as YOLO's
+    model.fuse(): BN only, ReLU stays a separate op in eager PyTorch)."""
+    from torch.nn.utils.fusion import fuse_conv_bn_eval
+    from torchvision.models.resnet import BasicBlock, Bottleneck
+    n = 0
+    for m in list(model.modules()):
+        if isinstance(m, nn.Sequential):
+            keys = list(m._modules)
+            for a, b in zip(keys, keys[1:]):
+                if isinstance(m._modules[a], nn.Conv2d) and isinstance(m._modules[b], nn.BatchNorm2d):
+                    m._modules[a] = fuse_conv_bn_eval(m._modules[a], m._modules[b])
+                    m._modules[b] = nn.Identity(); n += 1
+        if isinstance(m, (BasicBlock, Bottleneck)):
+            for i in (1, 2, 3):
+                c, bn = getattr(m, f"conv{i}", None), getattr(m, f"bn{i}", None)
+                if isinstance(c, nn.Conv2d) and isinstance(bn, nn.BatchNorm2d):
+                    setattr(m, f"conv{i}", fuse_conv_bn_eval(c, bn)); setattr(m, f"bn{i}", nn.Identity()); n += 1
+    left = sum(isinstance(m, nn.BatchNorm2d) for m in model.modules())
+    print(f"fuse_unet_bn: folded {n} BatchNorm2d, {left} left")
+    return model
+
+
 def build_model(args):
     if args.model == "unet":
         # The project's own ResNetUNet (kfold_unet_variants.py): torchvision ResNet
@@ -51,6 +74,8 @@ def build_model(args):
         if args.weights:
             ckpt = torch.load(args.weights, map_location="cpu", weights_only=False)
             model.load_state_dict(ckpt.get("model_state_dict", ckpt))
+        if args.fuse:
+            model = fuse_unet_bn(model.float().eval())
     else:
         if args.weights:
             from ultralytics import YOLO
@@ -253,7 +278,7 @@ def main():
     ap.add_argument("--classes", type=int, default=None, help="default 3 (unet: bg, mf, ian) / 2 (yolo)")
     ap.add_argument("--yolo-cfg", default="yolov8n-seg.yaml")
     ap.add_argument("--unet-config", default="r34_imagenet_aug", help="key of kfold_unet_variants.CONFIGS")
-    ap.add_argument("--fuse", action="store_true", help="yolo only: fold BN into conv")
+    ap.add_argument("--fuse", action="store_true", help="fold BN into conv (yolo: model.fuse(); unet: fuse_unet_bn, 2026-11-15)")
     ap.add_argument("--batch", type=int, default=1)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--dtype", choices=["fp32", "fp16"], default="fp32")
@@ -451,7 +476,7 @@ def main():
         "- At batch 1 the time of tiny layers includes kernel-launch gaps, which is "
         "real eager-mode latency but not a property of the hardware roof.",
         "- Unfused BatchNorm and activations appear as separate memory-bound layers; "
-        "a deployment compiler would fuse them into the convolution (try --fuse for YOLO).",
+        "a deployment compiler would fuse them into the convolution (try --fuse).",
         "- The roof is this server's measured peak, not an edge device.",
     ]
     (out / "summary.md").write_text("\n".join(lines) + "\n")

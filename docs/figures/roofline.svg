@@ -25,5 +25,6 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,san
 <circle cx="333" cy="136" r="5" class="b line" fill="none" stroke-width="2"/>
 <circle cx="365.0" cy="119.0" r="5" class="b fill ring" stroke-width="2"/>
 <text x="395.0" y="160.0" class="t small" text-anchor="start">YOLO26n: 15.6 → 22.6 after fusion</text>
-<circle cx="451.0" cy="110.0" r="5" class="a fill ring" stroke-width="2"/>
-<text x="460.0" y="132.0" class="t small" text-anchor="start">U-Net: 59.9, right of the ridge</text></svg>
+<circle cx="449" cy="110" r="5" class="a line" fill="none" stroke-width="2"/>
+<circle cx="480.0" cy="110.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="460.0" y="132.0" class="t small" text-anchor="start">U-Net: 59.9 → 83.5 after fusion</text></svg>

@@ -42,6 +42,8 @@ panoramic radiograph
 
 The deployed version of the whole chain is one script, `deployment/deploy_pipeline.py` ([section 7](#7-deployment)).
 
+<sub>[↑ Contents](#contents)</sub>
+
 ## 2. Data and evaluation
 
 559 ROIs cropped from at least 294 panoramic radiographs, 5-fold cross-validation grouped by patient and source
@@ -52,12 +54,32 @@ the test set scored with a five-fold pixel-wise majority vote, keeping only the 
 A manual review found 8 same-patient pairs (different visits) across cross-validation folds and none between the test set
 and training. Excluding them keeps the U-Net lead below at +3.2 to +3.5 points (p ≤ 0.0004; `data/find_same_patient_cv.py`).
 
+Stage 1 has no tooth-level ground truth on the patient test set, so it is checked at the level of the pipeline: the automatic
+crop contains the annotated foramen in 137 of 137 test ROIs (95% CI 97.3–100%) and produces an ROI for 204 of 206 sides of
+the test radiographs. Over all 851 radiographs, without the selection of the test set, 10.0% of sides get no ROI, mostly
+with many missing teeth (`stage1/stage1_eval.py`, `stage1/stage1_failures.py`).
+
+<sub>[↑ Contents](#contents)</sub>
+
 ## 3. Segmentation model: U-Net against YOLO-seg
 
 | Model | Test hit rate | Test mf Dice | Test ian Dice |
 | --- | --- | --- | --- |
 | U-Net (ResNet34) | 93.0 ± 0.8% | 0.712 | 0.683 |
 | YOLO26s-seg (best of six YOLO models) | 87.7 ± 1.7% | 0.707 | 0.685 |
+
+All seven models with seed 0 (five-fold cross-validation and the test-set five-fold vote, lcc). YOLO26s was chosen for
+the five-seed comparison above before the other seeds were run:
+
+| Model (seed 0) | CV hit rate | CV mf Dice | CV ian Dice | Test hit rate | Test mf Dice | Test ian Dice |
+| --- | --- | --- | --- | --- | --- | --- |
+| U-Net (ResNet34) | **87.1%** | **0.715** | 0.642 | **94.2%** | **0.720** | 0.680 |
+| YOLOv8n-seg | 81.6% | 0.676 | 0.577 | 85.4% | 0.676 | 0.640 |
+| YOLOv8s-seg | 78.2% | 0.663 | 0.598 | 85.4% | 0.664 | 0.645 |
+| YOLO11n-seg | 82.3% | 0.691 | 0.614 | 84.7% | 0.699 | 0.657 |
+| YOLO11s-seg | 83.0% | 0.700 | 0.613 | 87.6% | 0.719 | 0.665 |
+| YOLO26n-seg | 82.5% | 0.697 | 0.637 | 86.1% | 0.700 | **0.685** |
+| YOLO26s-seg | 82.5% | 0.695 | **0.647** | 89.8% | 0.714 | 0.682 |
 
 - With the five seeds pooled and a patient-level bootstrap, the U-Net finds more foramina: +5.3 points on the test
   set (95% CI 2.4–8.5, p = 0.0005) and +3.8 points in cross-validation (95% CI 2.1–5.6, p < 0.001). Dice is not
@@ -70,7 +92,12 @@ and training. Excluding them keeps the U-Net lead below at +3.2 to +3.5 points (
 
 - Accuracy is limited by how visible the foramen is: on images graded as visible, Dice reaches 0.84, above the
   annotator's own repeat agreement (0.79), and only 4 of the 236 visible cross-validation ROIs are missed
-  (`analysis/pano_visibility.py`, `stage2/visible_headroom.py`).
+  (`analysis/pano_visibility.py`, `stage2/visible_headroom.py`). The U-Net's lead over YOLO26s lies in the images graded
+  as not visible (cross-validation, U-Net five seeds against YOLO26s seed 0: 78.3% against 71.8%; visible: 98.2% against 97.0%).
+
+![Hit rate and Dice by visibility grade](docs/figures/visibility.svg)
+
+<sub>[↑ Contents](#contents)</sub>
 
 ## 4. Design choices
 
@@ -86,6 +113,8 @@ current split with three to five seeds and lcc (`stage2/kfold_pano.py --unet-con
 
 ![Foramen hit rate by number of training ROIs](docs/figures/learning_curve.svg)
 
+- A larger ResNet50 encoder does not help (seed 0, cross-validation against ResNet34: hit rate −0.9 points, 95% CI −2.9
+  to +1.1; mf Dice −0.019, p = 0.013; ian Dice −0.016, p = 0.001), so ResNet34 is kept.
 - CLAHE does not beat the light unsharp mask.
 
 ![CLAHE minus unsharp mask, with confidence intervals](docs/figures/preprocessing.svg)
@@ -97,6 +126,8 @@ current split with three to five seeds and lcc (`stage2/kfold_pano.py --unet-con
   dark-blob response plus a position prior, no neural network) finds 52–66% of foramina against the U-Net's 88–93%
   (`stage2/quality_errors.py`, `stage2/quality_methods.py`, `stage2/quality_train_eval.py`, `stage2/quality_gate.py`).
 
+<sub>[↑ Contents](#contents)</sub>
+
 ## 5. Uncertainty and referral
 
 Disagreement among models trained with different seeds flags uncertain cases without labels: referring the 10%
@@ -105,6 +136,8 @@ most uncertain ROIs to a clinician raises the hit rate on the rest from 87.8% to
 vote) (`analysis/pano_uncertainty.py`, `analysis/uncertainty_ci.py`).
 
 ![Hit rate on retained ROIs by share referred to a clinician](docs/figures/referral.svg)
+
+<sub>[↑ Contents](#contents)</sub>
 
 ## 6. Tooth position
 
@@ -138,6 +171,8 @@ Tooth position follows Tebo & Telford: which tooth the foramen lies beneath, jud
   `stage1/stage1_flag_robust.py`, `deployment/deploy_pipeline.py --flip-flag`).
 - Not adopted: correcting the predicted foramen's width or centroid (no systematic bias), and a midline rule between adjacent
   tooth axes, which needs a relabeled test set before it can be compared (`position/position_improve.py`, `position/midline_rule.py`).
+
+<sub>[↑ Contents](#contents)</sub>
 
 ## 7. Deployment
 
@@ -173,6 +208,8 @@ correct, 6.4% silent errors. The foramen hit rate is about 1 point below the ful
 - Robustness: under synthetic changes the U-Net is most sensitive to noise (σ = 5 grey levels: −8.9 points). A 3×3 median
   filter recovers most of it without hurting clean images, and is kept as an option (`--pre median3`) because the data
   has no such noise (`analysis/robust_stress.py`, `analysis/robust_defense.py`).
+
+![Hit rate under synthetic image changes, with and without a median filter](docs/figures/robustness.svg)
 - Measuring latency on a laptop: wall-clock times of the same configuration varied by about ±25% between sessions, while
   rounds within a session agreed to 1–4%. The main cause was Windows power throttling (EcoQoS): a process started from a
   background window is moved to efficiency scheduling after a few minutes, and the 12-thread stage-1 model slows from about
@@ -183,6 +220,8 @@ correct, 6.4% silent errors. The foramen hit rate is about 1 point below the ful
   comparisons above are made within one session (`deployment/cpu_timing/`).
 
 ![Stage-1 latency against time spent in a background window](docs/figures/cpu_throttling.svg)
+
+<sub>[↑ Contents](#contents)</sub>
 
 ## 8. Hardware
 
@@ -196,6 +235,17 @@ INT8 accelerator gains most from doing fewer MACs.
 Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency across PE arrays and SRAM sizes:
 
 ![Measured per-layer roofline of the U-Net](docs/figures/roofline_unet.png)
+
+- Folding the 46 BatchNorm layers into the convolutions raises the U-Net's intensity from 59.9 to 83.5 FLOP/byte and cuts
+  the share of layer time spent in memory-bound layers from 40% to 19%; end-to-end latency on the RTX 3090 drops only from
+  5.9 to 5.7 ms (median, two alternating runs each), because the convolutions already dominate (`hardware/roofline_profile.py --fuse`).
+- The deployed CPU runtime already fuses everything: OpenVINO folds BatchNorm, ReLU, the residual additions and the output
+  quantization into each of the 47 convolutions, and convolutions take 92.6% of the INT8 time. Every block runs at about the
+  same speed, so each block's share of time follows its share of multiply-accumulates; the high-resolution end of the decoder
+  (decoder 3 and the head) takes about 30%. Further speed-ups must come from fewer MACs, not from fusion
+  (`deployment/unet_perf_count.py`, `deployment/perf_count_layers.py`).
+
+![Share of MACs and of INT8 time per U-Net block](docs/figures/unet_layers.svg)
 
 ![Modeled latency by PE array and SRAM size](docs/figures/accelerator_latency.png)
 
@@ -211,6 +261,8 @@ Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency acr
 - Fixed-point arithmetic for the RTL: a 16-bit requantization multiplier is enough; biases need 8 extra fractional bits in
   the accumulator, and residual additions should align both inputs and round once. With these the fixed-point model matches
   the integer model (five seeds: hit +0.04 points, mf Dice −0.0003; `hardware/fx_diag.py`, `hardware/fx_seeds.py`).
+
+<sub>[↑ Contents](#contents)</sub>
 
 ## Main scripts
 
@@ -238,6 +290,7 @@ Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency acr
 | `deployment/deploy_pipeline.py`, `deployment/fast_masks.py`, `deployment/score_from_csv.py` | Deployed pipeline: scoring, timing, CPU (OpenVINO) and GPU (PyTorch) versions |
 | `deployment/bottleneck.py`, `deployment/unet_call_split.py`, `deployment/unet_int8_bench.py`, `deployment/pipeline_timing.py` | Where accuracy and time are lost; U-Net call breakdown; INT8 against FP32 |
 | `deployment/int8_quant.py`, `deployment/int8_ensemble.py`, `deployment/cascade_infer.py`, `deployment/single_small_lcc.py`, `deployment/distill_ensemble.py` | INT8 quantization, the cascade, a small single model, ensemble distillation |
+| `deployment/unet_perf_count.py`, `deployment/perf_count_layers.py` | OpenVINO per-node CPU profile of the U-Net (fusion check) and its mapping back to layers, MACs and INT8 / FP32 speed |
 | `deployment/no_throttle.py`, `deployment/cpu_timing/` | Opting out of Windows power throttling; sustained-load, core-scheduling and background-throttling benchmarks for laptop latency (PowerShell + Python) |
 | `analysis/policy_pareto.py`, `analysis/robust_stress.py`, `analysis/robust_remedy.py`, `analysis/robust_defense.py` | Compute against accuracy; synthetic stress tests and inference-time defenses |
 | `hardware/roofline_profile.py`, `hardware/roofline_workload.py`, `hardware/accel_model.py`, `hardware/accel_explore.py`, `hardware/accel_lowbit.py` | Rooflines, workload characterization and the analytical accelerator model, including bit width and 2:4 sparsity |

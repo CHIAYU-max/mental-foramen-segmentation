@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 458" role="img" aria-label="Share of MACs and of INT8 time per U-Net block"><style>
+.bg{fill:#fcfcfb}.t{fill:#0b0b0b}.s{fill:#52514e}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.edge{stroke:#8a8983}
+.a{--c:#2a78d6}.b{--c:#eb6834}.c{--c:#6e6d68}
+.fill{fill:var(--c)}.line{stroke:var(--c)}.ring{stroke:#fcfcfb}.tint{fill:var(--c);fill-opacity:.12}.card{fill:#fcfcfb}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.title{font-size:16px;font-weight:600}.small{font-size:12px}.bold{font-weight:600}
+@media (prefers-color-scheme:dark){
+.bg,.card{fill:#1a1a19}.t{fill:#f0efec}.s{fill:#c3c2b7}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.edge{stroke:#8a8983}
+.a{--c:#3987e5}.b{--c:#d95926}.c{--c:#a9a89f}.ring{stroke:#1a1a19}}
+</style><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a8983"/></marker></defs><rect class="bg" width="860" height="458" rx="8"/>
+<text x="24.0" y="30.0" class="t title" text-anchor="start">On the CPU, time follows the multiply-accumulates</text>
+<text x="24.0" y="50.0" class="s small" text-anchor="start">U-Net INT8 in OpenVINO on the laptop CPU, per block. Convolutions run at 560–720 GMAC/s almost everywhere</text>
+<rect x="24" y="64" width="11" height="11" rx="2" class="a fill"/>
+<text x="40.0" y="74.0" class="s small" text-anchor="start">Share of MACs (40.9 GMAC)</text>
+<rect x="223" y="64" width="11" height="11" rx="2" class="b fill"/>
+<text x="239.0" y="74.0" class="s small" text-anchor="start">Share of INT8 time (71.3 ms)</text>
+<line x1="230.0" y1="96.0" x2="230.0" y2="396.0" class="grid" stroke-width="1" />
+<text x="230.0" y="415.0" class="s small" text-anchor="middle">0%</text>
+<line x1="372.5" y1="96.0" x2="372.5" y2="396.0" class="grid" stroke-width="1" />
+<text x="372.5" y="415.0" class="s small" text-anchor="middle">5%</text>
+<line x1="515.0" y1="96.0" x2="515.0" y2="396.0" class="grid" stroke-width="1" />
+<text x="515.0" y="415.0" class="s small" text-anchor="middle">10%</text>
+<line x1="657.5" y1="96.0" x2="657.5" y2="396.0" class="grid" stroke-width="1" />
+<text x="657.5" y="415.0" class="s small" text-anchor="middle">15%</text>
+<line x1="800.0" y1="96.0" x2="800.0" y2="396.0" class="grid" stroke-width="1" />
+<text x="800.0" y="415.0" class="s small" text-anchor="middle">20%</text>
+<text x="218.0" y="115.0" class="t small" text-anchor="end">Encoder stem</text>
+<rect x="230.0" y="104.0" width="42.8" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="112.0" width="79.8" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="145.0" class="t small" text-anchor="end">Encoder layer 1</text>
+<rect x="230.0" y="134.0" width="253.6" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="142.0" width="247.9" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="175.0" class="t small" text-anchor="end">Encoder layer 2</text>
+<rect x="230.0" y="164.0" width="319.2" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="172.0" width="307.8" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="205.0" class="t small" text-anchor="end">Encoder layer 3</text>
+<rect x="230.0" y="194.0" width="487.4" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="202.0" width="458.9" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="235.0" class="t small" text-anchor="end">Encoder layer 4</text>
+<rect x="230.0" y="224.0" width="233.7" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="232.0" width="228.0" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="265.0" class="t small" text-anchor="end">Decoder 0 (32 × 32)</text>
+<rect x="230.0" y="254.0" width="168.2" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="262.0" width="145.4" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="295.0" class="t small" text-anchor="end">Decoder 1 (64 × 64)</text>
+<rect x="230.0" y="284.0" width="168.2" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="292.0" width="145.4" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="325.0" class="t small" text-anchor="end">Decoder 2 (128 × 128)</text>
+<rect x="230.0" y="314.0" width="168.2" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="322.0" width="151.1" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="355.0" class="t small" text-anchor="end">Decoder 3 (256 × 256)</text>
+<rect x="230.0" y="344.0" width="504.5" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="352.0" width="419.0" height="7" rx="2" class="b fill"/>
+<text x="218.0" y="385.0" class="t small" text-anchor="end">Head (512 × 512)</text>
+<rect x="230.0" y="374.0" width="507.3" height="7" rx="2" class="a fill"/>
+<rect x="230.0" y="382.0" width="456.0" height="7" rx="2" class="b fill"/>
+<text x="515.0" y="436.0" class="s small" text-anchor="middle">Share of the U-Net total. Non-convolution nodes (interpolate, concat, reorder) are 7% of the time</text></svg>

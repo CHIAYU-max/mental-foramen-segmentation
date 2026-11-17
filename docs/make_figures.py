@@ -234,8 +234,10 @@ def roofline():
     s.parts.append('<circle cx="333" cy="136" r="5" class="b line" fill="none" stroke-width="2"/>')
     s.dot(365, 119, "b")
     s.text(395, 160, "YOLO26n: 15.6 → 22.6 after fusion", "t small", "start")
-    s.dot(451, 110, "a")
-    s.text(460, 132, "U-Net: 59.9, right of the ridge", "t small")
+    # U-Net 融合 BN 前後(11/16 roofline_profile --fuse,3090): 59.9 → 83.5 FLOP/byte;x 依 log 尺度,與 YOLO 的位置一致
+    s.parts.append('<circle cx="449" cy="110" r="5" class="a line" fill="none" stroke-width="2"/>')
+    s.dot(480, 110, "a")
+    s.text(460, 132, "U-Net: 59.9 → 83.5 after fusion", "t small")
     s.save("roofline")
 
 
@@ -349,9 +351,80 @@ def cpu_throttling():
     s.text(448, 356, "Minutes in a background window", "s small", "middle")
     s.save("cpu_throttling")
 
+def dot_rows(s, rows, left, right, top, lo, hi, ticks, fmt, row_h=36):
+    """Two dots per row joined by a line: rows = (label, a_value, b_value, note). Returns the bottom y."""
+    x = lambda v: left + (v - lo) / (hi - lo) * (right - left)
+    bottom = top + len(rows) * row_h
+    for t in ticks:
+        s.line(x(t), top, x(t), bottom, "grid")
+        s.text(x(t), bottom + 19, fmt(t), "s small", "middle")
+    for i, (name, va, vb, note) in enumerate(rows):
+        cy = top + i * row_h + row_h / 2
+        s.text(left - 12, cy + 4, name, "t small", "end")
+        s.line(x(min(va, vb)), cy, x(max(va, vb)), cy, "edge", 1)
+        s.dot(x(vb), cy, "b", 5)
+        s.dot(x(va), cy, "a", 5)
+        if note:
+            s.text(x(max(va, vb)) + 10, cy + 4, note, "s small")
+    return bottom
+
+
+def visibility():
+    # pano_visibility.py --post lcc(10/29),U-Net 5 種子平均;可辨識度由標註者分級
+    rows = [("Cross-validation, visible (236)", 98.2, 84.4, "Dice 0.844"), ("Cross-validation, not visible (323)", 78.3, 60.3, "Dice 0.603"),
+            ("Test set, visible (58)", 99.7, 82.4, "Dice 0.824"), ("Test set, not visible (79)", 88.1, 63.0, "Dice 0.630")]
+    s = Svg(860, 96 + len(rows) * 40 + 60, "Misses come almost only from foramina the grader could not see",
+            "U-Net, five seeds, lcc, split by the annotator's visibility grade. Dashed: the annotator's repeat Dice (0.79)", "Hit rate and Dice by visibility grade")
+    s.legend(24, 74, [("Hit rate", "a"), ("Foramen Dice × 100", "b")])
+    left, right, top, lo, hi = 290, 800, 96, 50, 100
+    x = lambda v: left + (v - lo) / (hi - lo) * (right - left)
+    b = dot_rows(s, [(n, h, d, "") for n, h, d, _ in rows], left, right, top, lo, hi, range(50, 101, 10), lambda t: f"{t}", 40)
+    s.line(x(79), top, x(79), b, "edge", 1, 'stroke-dasharray="4 4"')
+    for i, (_, h, d, _) in enumerate(rows):
+        cy = top + i * 40 + 20
+        s.text(x(h) + 9, cy - 8, f"{h}%", "t small")
+    s.text((left + right) / 2, b + 40, "Hit rate (%) and foramen Dice (× 100)", "s small", "middle")
+    s.save("visibility")
+
+
+def robustness():
+    # robust_defense.py(11/14): 測試集 137 ROI 加合成變化,INT8 串接式聯集,5 種子平均
+    rows = [("Original images", 91.8, 91.7), ("Gaussian noise, σ = 5", 82.9, 90.9), ("Gaussian noise, σ = 10", 47.4, 86.7),
+            ("Contrast × 0.5", 87.4, 86.1), ("Gaussian blur, σ = 2", 85.3, 84.8), ("JPEG quality 30", 89.3, 90.8)]
+    s = Svg(860, 96 + len(rows) * 36 + 62, "Noise is the main weakness, and a median filter removes most of it",
+            "Test set with synthetic changes, deployed INT8 cascade, five seeds. Grey levels 0–255", "Hit rate under synthetic image changes, with and without a median filter")
+    s.legend(24, 74, [("3×3 median filter before the U-Net", "a"), ("No filter (deployed default)", "b")])
+    b = dot_rows(s, [(n, m, r, f"{r:.1f}% → {m:.1f}%") for n, r, m in rows], 250, 700, 96, 40, 100, range(40, 101, 10), lambda t: f"{t}%")
+    s.text(475, b + 40, "Foramen hit rate. Gamma 0.6–1.25, brightness ±30, contrast × 0.75–1.5 and half resolution change it by < 1.7 points", "s small", "middle")
+    s.save("robustness")
+
+
+def unet_layers():
+    # perf_count_layers.py(11/16): 筆電 i5-13500H,OpenVINO 2026.4 PERF_COUNT,INT8,合成影像;時間佔比 = 佔逐節點加總 71.3 ms
+    rows = [("Encoder stem", 1.5, 2.8), ("Encoder layer 1", 8.9, 8.7), ("Encoder layer 2", 11.2, 10.8), ("Encoder layer 3", 17.1, 16.1),
+            ("Encoder layer 4", 8.2, 8.0), ("Decoder 0 (32 × 32)", 5.9, 5.1), ("Decoder 1 (64 × 64)", 5.9, 5.1),
+            ("Decoder 2 (128 × 128)", 5.9, 5.3), ("Decoder 3 (256 × 256)", 17.7, 14.7), ("Head (512 × 512)", 17.8, 16.0)]
+    s = Svg(860, 96 + len(rows) * 30 + 62, "On the CPU, time follows the multiply-accumulates",
+            "U-Net INT8 in OpenVINO on the laptop CPU, per block. Convolutions run at 560–720 GMAC/s almost everywhere", "Share of MACs and of INT8 time per U-Net block")
+    s.legend(24, 74, [("Share of MACs (40.9 GMAC)", "a"), ("Share of INT8 time (71.3 ms)", "b")])
+    left, right, top = 230, 800, 96
+    x = lambda v: left + v / 20 * (right - left)
+    bottom = top + len(rows) * 30
+    for t in (0, 5, 10, 15, 20):
+        s.line(x(t), top, x(t), bottom, "grid")
+        s.text(x(t), bottom + 19, f"{t}%", "s small", "middle")
+    for i, (name, mac, ms) in enumerate(rows):
+        cy = top + i * 30 + 15
+        s.text(left - 12, cy + 4, name, "t small", "end")
+        for value, group, dy in ((mac, "a", -7), (ms, "b", 1)):
+            s.parts.append(f'<rect x="{x(0):.1f}" y="{cy + dy:.1f}" width="{x(value) - x(0):.1f}" height="7" rx="2" class="{group} fill"/>')
+    s.text((left + right) / 2, bottom + 40, "Share of the U-Net total. Non-convolution nodes (interpolate, concat, reorder) are 7% of the time", "s small", "middle")
+    s.save("unet_layers")
+
+
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     for make in (pipeline, hit_threshold, referral, compute, learning_curve, preprocessing, ablation, roofline, accelerator,
-                 system_referral, low_bit, deploy_latency, cpu_throttling):
+                 system_referral, low_bit, deploy_latency, cpu_throttling, visibility, robustness, unet_layers):
         make()
     print(sorted(p.name for p in OUT.glob("*.svg")))

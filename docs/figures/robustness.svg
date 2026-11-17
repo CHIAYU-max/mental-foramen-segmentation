@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 374" role="img" aria-label="Hit rate under synthetic image changes, with and without a median filter"><style>
+.bg{fill:#fcfcfb}.t{fill:#0b0b0b}.s{fill:#52514e}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.edge{stroke:#8a8983}
+.a{--c:#2a78d6}.b{--c:#eb6834}.c{--c:#6e6d68}
+.fill{fill:var(--c)}.line{stroke:var(--c)}.ring{stroke:#fcfcfb}.tint{fill:var(--c);fill-opacity:.12}.card{fill:#fcfcfb}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.title{font-size:16px;font-weight:600}.small{font-size:12px}.bold{font-weight:600}
+@media (prefers-color-scheme:dark){
+.bg,.card{fill:#1a1a19}.t{fill:#f0efec}.s{fill:#c3c2b7}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.edge{stroke:#8a8983}
+.a{--c:#3987e5}.b{--c:#d95926}.c{--c:#a9a89f}.ring{stroke:#1a1a19}}
+</style><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a8983"/></marker></defs><rect class="bg" width="860" height="374" rx="8"/>
+<text x="24.0" y="30.0" class="t title" text-anchor="start">Noise is the main weakness, and a median filter removes most of it</text>
+<text x="24.0" y="50.0" class="s small" text-anchor="start">Test set with synthetic changes, deployed INT8 cascade, five seeds. Grey levels 0–255</text>
+<rect x="24" y="64" width="11" height="11" rx="2" class="a fill"/>
+<text x="40.0" y="74.0" class="s small" text-anchor="start">3×3 median filter before the U-Net</text>
+<rect x="286" y="64" width="11" height="11" rx="2" class="b fill"/>
+<text x="302.0" y="74.0" class="s small" text-anchor="start">No filter (deployed default)</text>
+<line x1="250.0" y1="96.0" x2="250.0" y2="312.0" class="grid" stroke-width="1" />
+<text x="250.0" y="331.0" class="s small" text-anchor="middle">40%</text>
+<line x1="325.0" y1="96.0" x2="325.0" y2="312.0" class="grid" stroke-width="1" />
+<text x="325.0" y="331.0" class="s small" text-anchor="middle">50%</text>
+<line x1="400.0" y1="96.0" x2="400.0" y2="312.0" class="grid" stroke-width="1" />
+<text x="400.0" y="331.0" class="s small" text-anchor="middle">60%</text>
+<line x1="475.0" y1="96.0" x2="475.0" y2="312.0" class="grid" stroke-width="1" />
+<text x="475.0" y="331.0" class="s small" text-anchor="middle">70%</text>
+<line x1="550.0" y1="96.0" x2="550.0" y2="312.0" class="grid" stroke-width="1" />
+<text x="550.0" y="331.0" class="s small" text-anchor="middle">80%</text>
+<line x1="625.0" y1="96.0" x2="625.0" y2="312.0" class="grid" stroke-width="1" />
+<text x="625.0" y="331.0" class="s small" text-anchor="middle">90%</text>
+<line x1="700.0" y1="96.0" x2="700.0" y2="312.0" class="grid" stroke-width="1" />
+<text x="700.0" y="331.0" class="s small" text-anchor="middle">100%</text>
+<text x="238.0" y="118.0" class="t small" text-anchor="end">Original images</text>
+<line x1="637.8" y1="114.0" x2="638.5" y2="114.0" class="edge" stroke-width="1" />
+<circle cx="638.5" cy="114.0" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="637.8" cy="114.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="648.5" y="118.0" class="s small" text-anchor="start">91.8% → 91.7%</text>
+<text x="238.0" y="154.0" class="t small" text-anchor="end">Gaussian noise, σ = 5</text>
+<line x1="571.8" y1="150.0" x2="631.8" y2="150.0" class="edge" stroke-width="1" />
+<circle cx="571.8" cy="150.0" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="631.8" cy="150.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="641.8" y="154.0" class="s small" text-anchor="start">82.9% → 90.9%</text>
+<text x="238.0" y="190.0" class="t small" text-anchor="end">Gaussian noise, σ = 10</text>
+<line x1="305.5" y1="186.0" x2="600.2" y2="186.0" class="edge" stroke-width="1" />
+<circle cx="305.5" cy="186.0" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="600.2" cy="186.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="610.2" y="190.0" class="s small" text-anchor="start">47.4% → 86.7%</text>
+<text x="238.0" y="226.0" class="t small" text-anchor="end">Contrast × 0.5</text>
+<line x1="595.8" y1="222.0" x2="605.5" y2="222.0" class="edge" stroke-width="1" />
+<circle cx="605.5" cy="222.0" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="595.8" cy="222.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="615.5" y="226.0" class="s small" text-anchor="start">87.4% → 86.1%</text>
+<text x="238.0" y="262.0" class="t small" text-anchor="end">Gaussian blur, σ = 2</text>
+<line x1="586.0" y1="258.0" x2="589.8" y2="258.0" class="edge" stroke-width="1" />
+<circle cx="589.8" cy="258.0" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="586.0" cy="258.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="599.8" y="262.0" class="s small" text-anchor="start">85.3% → 84.8%</text>
+<text x="238.0" y="298.0" class="t small" text-anchor="end">JPEG quality 30</text>
+<line x1="619.8" y1="294.0" x2="631.0" y2="294.0" class="edge" stroke-width="1" />
+<circle cx="619.8" cy="294.0" r="5" class="b fill ring" stroke-width="2"/>
+<circle cx="631.0" cy="294.0" r="5" class="a fill ring" stroke-width="2"/>
+<text x="641.0" y="298.0" class="s small" text-anchor="start">89.3% → 90.8%</text>
+<text x="475.0" y="352.0" class="s small" text-anchor="middle">Foramen hit rate. Gamma 0.6–1.25, brightness ±30, contrast × 0.75–1.5 and half resolution change it by &lt; 1.7 points</text></svg>
