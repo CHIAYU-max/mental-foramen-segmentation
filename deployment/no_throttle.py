@@ -5,11 +5,18 @@
 都維持約 190–230 ms(EXPERIMENTS.md「2026-11-16 筆電延遲變異的真正原因」)。
 用法: import no_throttle; no_throttle.disable()  — 在載入模型前呼叫;不是 Windows 時什麼都不做。回傳是否成功。
 只影響執行速度,不影響結果。
+2026-11-17: 同時呼叫 timing_env.begin(),記錄計時前後的記憶體、分頁檔、電源模式與 OMEN 模式
+(compare_results/deploy_eval/timing_env_log.csv;TIMING_ENV_LOG=0 可關)。
 """
 import sys
 
 
 def disable():
+    try:
+        import deployment.timing_env as timing_env
+        timing_env.begin()
+    except Exception:
+        pass
     if sys.platform != "win32":
         return False
     import ctypes

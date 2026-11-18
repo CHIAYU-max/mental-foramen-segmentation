@@ -15,6 +15,7 @@
 """
 import argparse
 import csv
+import os
 import platform
 import statistics
 import time
@@ -151,6 +152,9 @@ MARGIN_REFER = 0.138  # --margin-refer: 邊界距離(個半寬)小於此值就�
 CASCADE_OUT = "intersection"
 YOLO_INT8 = OUT / "yolo_int8"
 UNET_WEIGHTS = None  # 2026-11-13: --unet-tag 第二階段改用另一個設定的權重(例如 r34_imagenet_aug_slimhalf),INT8 現做並快取
+# 2026-11-18 使用者確認: 正式部署版本(命令列)的第二階段改用瘦身解碼器(score_slimhalf 五種子: 牙位 +1.36 點、ian Dice −0.010;time10 每張 −144 ms)。
+# 只改命令列預設;import 本模組的分析程式(UNET_WEIGHTS = None)仍是主模型 r34_imagenet_aug,和 11/18 以前的結果可比
+DEPLOY_UNET_TAG = "r34_imagenet_aug_slimhalf"
 TEETH_IMGSZ, T32_IMGSZ = 1024, 1024  # --teeth-imgsz / --t32-imgsz
 TEETH_OV = None  # 2026-11-13: --teeth-ov 指定第一階段的 OpenVINO 模型資料夾(stage1_int8.py 的候選),32 類維持 INT8
 
@@ -338,29 +342,9 @@ OVERLAYS = {"ded574b5-45a0-4f42-8737-46345c09c238": "最佳效能", "961cc777-25
 
 def environment():
     # 2026-11-14(使用者同意): 計時前記錄電源狀態、電量、電源模式與當下的 CPU 使用率;11/14 下午曾在電池供電時量到每張 3.8 s(正常約 0.9 s)
-    env = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "power": "unknown", "battery": "", "charging": "", "mode": "", "cpu_load": ""}
-    try:
-        import psutil
-        env["cpu_load"] = psutil.cpu_percent(interval=1.0)
-    except Exception:
-        pass
-    if platform.system() == "Windows":
-        import ctypes
-        import winreg
-
-        class Status(ctypes.Structure):
-            _fields_ = [("ac", ctypes.c_ubyte), ("flag", ctypes.c_ubyte), ("percent", ctypes.c_ubyte), ("system", ctypes.c_ubyte),
-                        ("life", ctypes.c_ulong), ("full", ctypes.c_ulong)]
-        st = Status()
-        ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(st))
-        env.update(power={0: "battery", 1: "AC"}.get(st.ac, "unknown"), battery=st.percent, charging=int(bool(st.flag & 8)))
-        try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes")
-            guid = winreg.QueryValueEx(key, "ActiveOverlayAcPowerScheme" if st.ac == 1 else "ActiveOverlayDcPowerScheme")[0]
-            env["mode"] = OVERLAYS.get(guid.lower(), guid)
-        except OSError:
-            pass
-    return env
+    # 2026-11-17: 改用 timing_env.snapshot(),另外記可用記憶體、分頁檔用量與 OMEN 模式(--omen-mode)
+    import deployment.timing_env as timing_env
+    return timing_env.snapshot()
 
 
 def run_time(args, out):
@@ -397,13 +381,21 @@ def run_time(args, out):
     write(out / "timing.csv", rows)
     write(out / "per_side.csv", sides_out)
     import openvino as ov
+    import deployment.timing_env as timing_env
+    end = environment()
+    try:
+        grow = int(end["pagefile_mb"]) - int(env["pagefile_mb"])
+    except (TypeError, ValueError):
+        grow = None
     hw = ov.Core().get_property('CPU', 'FULL_DEVICE_NAME') + (f" + {torch.cuda.get_device_name(0)}" if DEVICE == "cuda" else "")
     lines = [f"# 部署流程延遲({platform.node()},{hw})", "",
              f"- 全景片 {len(rows)} 張(暖機 {args.warmup} 張不計),ROI {sum(r['rois'] for r in rows)} 個,"
              f"每個 ROI 平均跑 {sum(r['models_run'] for r in rows) / max(1, sum(r['rois'] for r in rows)):.2f} 個 {args.precision.upper()} U-Net;"
              f"第一階段與 32 類模型 {dict(pt='PyTorch CUDA FP32' if DEVICE == 'cuda' else 'PyTorch CPU', ov_fp32='OpenVINO FP32', ov_int8='OpenVINO INT8', ov_mixed='第一階段 OpenVINO FP32、32 類 INT8')[args.yolo] if not TEETH_OV else f'第一階段 {TEETH_OV}、32 類 INT8'};串接式輸出 {CASCADE_OUT}{f';先跑 {FIRST_TAG}' if FIRST_TAG else ''}{f';前處理 {PRE}' if PRE else ''};U-Net 執行緒 {args.threads or '預設'}",
              f"- 環境: 開始 {env['time']},電源 {env['power']}、電量 {env['battery']}%{'(充電中)' if env['charging'] else ''}、電源模式 {env['mode']}、"
-             f"開始前 CPU 使用率 {env['cpu_load']}%、power throttling {'已關閉' if env['throttle_off'] else '沒有關閉'};結束時電源 {environment()['power']}",
+             f"開始前 CPU 使用率 {env['cpu_load']}%、power throttling {'已關閉' if env['throttle_off'] else '沒有關閉'};結束時電源 {end['power']}",
+             f"- 記憶體: 開始 {timing_env.describe(env)};結束 {timing_env.describe(end)}"
+             + (";**分頁檔增加超過 200 MB,這一輪可能有用到分頁檔,數字不能用**" if grow is not None and grow > 200 else ""),
              f"- 每張全景片牆鐘時間 平均 {statistics.mean(r['wall_ms'] for r in rows):.1f} ms、中位數 {statistics.median(r['wall_ms'] for r in rows):.1f} ms、"
              f"p90 {np.percentile([r['wall_ms'] for r in rows], 90):.1f} ms", "",
              "| 階段 | 平均 ms | 中位數 ms | 佔比 |", "| --- | --- | --- | --- |"]
@@ -635,7 +627,8 @@ def main():
     # 2026-11-13 晚(使用者確認)正式部署版本再加: 第一階段後處理只算框內(逐像素相同)、32 類模型 imgsz 640
     parser.add_argument("--no-fast-masks", dest="fast_masks", action="store_false",
                         help="關掉 fast_masks.py(第一階段原圖解析度 mask 只算框內,逐像素相同;預設開)")
-    parser.add_argument("--unet-tag", help="第二階段改用這個設定的權重(kfold_unet_variants.CONFIGS),例如 r34_imagenet_aug_slimhalf")
+    parser.add_argument("--unet-tag", help="第二階段用這個設定的權重(kfold_unet_variants.CONFIGS);預設 r34_imagenet_aug_slimhalf(2026-11-18 起的正式部署版本),"
+                        "r34_imagenet_aug = 11/18 以前的主模型;--device cuda 只支援主模型,沒指定時自動用主模型")
     parser.add_argument("--teeth-imgsz", type=int, default=1024)
     parser.add_argument("--t32-imgsz", type=int, default=640, help="32 類模型(旗標)的輸入解析度;預設 640(正式部署版本),11/13 白天的結果是 1024")
     parser.add_argument("--teeth-ov", help="第一階段改用這個 OpenVINO 模型資料夾(覆蓋 --yolo 的第一階段;32 類 INT8)")
@@ -651,12 +644,22 @@ def main():
     parser.add_argument("--flip-flag", action="store_true", help="多跑一次水平翻轉的第一階段,兩次的牙位不同就轉介(預設關;第一階段時間約 2 倍)")
     parser.add_argument("--baseline", help="評分: 另一次部署評分的資料夾名稱(compare_results/deploy_eval/ 底下),逐項配對比較")
     # 2026-11-16(使用者同意): 在背景視窗跑久了 Windows 會把行程節能排程(EcoQoS),第一階段慢約 1.5 倍;預設一開始就關掉節流
+    parser.add_argument("--omen-mode", choices=["eco", "balanced", "performance", "unknown"],
+                        help="計時: OMEN Gaming Hub 當時的模式(程式讀不到,手動填;記進 summary.md 與 timing_env_log.csv,2026-11-17)")
     parser.add_argument("--allow-throttle", action="store_true", help="不要關掉 Windows 的 power throttling(2026-11-16 以前的行為;背景執行時第一階段會慢約 1.5 倍)")
     args = parser.parse_args()
     global CASCADE_OUT, TEETH_OV, UNET_WEIGHTS, TEETH_IMGSZ, T32_IMGSZ, FIRST_TAG, PRE, FLIP_FLAG, MARGIN_REFER, FAST_ARGMAX, DEVICE, THROTTLE_OFF
+    # 2026-11-17: 只有 --time 才寫 timing_env_log.csv(評分不算計時);OMEN 模式由 --omen-mode 傳給 timing_env
+    if args.omen_mode:
+        os.environ["OMEN_MODE"] = args.omen_mode
+    if not args.time:
+        os.environ.setdefault("TIMING_ENV_LOG", "0")
     if not args.allow_throttle:
         import deployment.no_throttle as no_throttle
         THROTTLE_OFF = no_throttle.disable()
+    elif args.time:
+        import deployment.timing_env as timing_env
+        timing_env.begin()
     DEVICE = args.device
     if DEVICE == "cuda":
         if not torch.cuda.is_available():
@@ -669,6 +672,8 @@ def main():
     FAST_ARGMAX = args.fast_argmax
     FLIP_FLAG, MARGIN_REFER = args.flip_flag, args.margin_refer
     FIRST_TAG, PRE = args.first_tag, args.pre
+    if args.unet_tag is None:  # 2026-11-18: 正式部署版本 = 瘦身解碼器;GPU 版還沒有瘦身解碼器,維持主模型
+        args.unet_tag = UNET_TAG if DEVICE == "cuda" else DEPLOY_UNET_TAG
     UNET_WEIGHTS, TEETH_IMGSZ, T32_IMGSZ = args.unet_tag, args.teeth_imgsz, args.t32_imgsz
     CASCADE_OUT = args.cascade_out
     TEETH_OV = args.teeth_ov

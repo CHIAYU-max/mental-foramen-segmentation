@@ -158,7 +158,8 @@ Tooth position follows Tebo & Telford: which tooth the foramen lies beneath, jud
   0.138 half-widths of a decision boundary; the threshold is the 10th percentile on cross-validation predictions, set before
   looking at the test set (`position/position_referral.py`, `position/referral_combo.py`).
 - Over all test sides, including abnormal ones, these rules cut silent errors (a wrong answer that is not referred) from
-  27% to 6.4%, at the cost of referring 39% of sides:
+  27% to 6.4%, at the cost of referring 39% of sides (full decoder; 7.2% and 37.9% with the deployed slim decoder,
+  section 7):
 
 ![Share of sides answered correctly, answered wrongly, or referred](docs/figures/system_referral.svg)
 
@@ -181,23 +182,33 @@ against the labels (`--score`) or times it (`--time`). The deployed configuratio
 
 - stage 1 in FP32 at 1024 px, with masks upsampled only inside each tooth's box (bit-identical to the original, `deployment/fast_masks.py`);
 - the 32-class tooth model in INT8 at 640 px, used only for the numbering flag;
-- the U-Net in OpenVINO INT8 (NNCF post-training quantization) as a cascade: run two folds, take their union if they agree
-  (foramen IoU ≥ 0.5), otherwise run all five and vote; a direct three-class comparison replaces `argmax` (bit-identical);
+- the U-Net with a slim decoder (decoder channels halved to 128 / 64 / 32 / 32, output head at half resolution, then
+  upsampled; adopted on 18 Nov 2026) in OpenVINO INT8 (NNCF post-training quantization) as a cascade: run two folds,
+  take their union if they agree (foramen IoU ≥ 0.5), otherwise run all five and vote; a direct three-class comparison
+  replaces `argmax` (bit-identical);
 - the three referral rules of section 6.
 
-Five seeds on the test set: tooth position 90.2% (95.1% adjudicated), 38.9% of sides referred, 89.5% of the answered sides
-correct, 6.4% silent errors. The foramen hit rate is about 1 point below the full-precision five-fold ensemble (−1.0,
-95% CI −1.9 to −0.3), while tooth position does not change.
+Five seeds on the test set: tooth position 91.6% (96.5% adjudicated), 37.9% of sides referred, 88.4% of the answered sides
+correct, 7.2% silent errors. The foramen hit rate is about 1 point below the full-precision five-fold ensemble (−1.3,
+95% CI −3.1 to +0.2), while tooth position does not change. Against the same pipeline with the full decoder, the slim
+decoder changes tooth position by +1.4 points (95% CI −0.2 to +3.2), the foramen hit rate by −0.3 points and the foramen
+Dice by −0.004 (both CIs include 0), and lowers the canal Dice by 0.010 (95% CI 0.004–0.017); it was adopted for the
+speed below.
 
 ![Latency per radiograph by configuration](docs/figures/deploy_latency.svg)
 
-- Speed: about 0.8 s per radiograph on a laptop CPU (i5-13500H, 786–807 ms over three rounds in one session) and about
-  0.2 s on its RTX 4050 (the GPU version is scored the same as the CPU version, except a canal Dice 0.004–0.007 lower).
-  INT8 makes the U-Net 3.0× faster and the whole pipeline 2.3× faster. 50% of the CPU time is the U-Net and 38% stage 1.
+- Speed: about 0.67 s per radiograph on a laptop CPU (i5-13500H, 662–672 ms over four rounds alternating with the full
+  decoder at 811 ms in the same session: −144 ms, 1.22× faster; p90 990 → 778 ms). With the full decoder, INT8 makes the
+  U-Net 3.0× faster and the whole pipeline 2.3× faster, and the RTX 4050 takes about 0.2 s (the GPU version is scored the
+  same as the CPU version, except a canal Dice 0.004–0.007 lower; it has no slim-decoder build yet). With the slim decoder,
+  46% of the CPU time is stage 1 and 39% the U-Net, so stage 1 is now the larger share.
 - What did not make it in: INT8 for stage 1 costs 2–4.5 points of tooth position, and mixed precision, accuracy-aware
   quantization and distillation QAT did not fix that without keeping most blocks in FP32 (`stage1/stage1_int8.py`);
   stage 1 below 1024 px fails the same check (`stage1/stage_imgsz.py`); 2:4 sparse weights are not faster on the CPU
-  (`hardware/sparse_cpu_bench.py`).
+  (`hardware/sparse_cpu_bench.py`). A hybrid cascade that first runs two cheaper 384 px U-Nets matched the hit rate, Dice
+  and tooth position over five seeds, but referred 1.5 points fewer sides with 0.6 points more silent errors and was only
+  about 5% faster on the laptop (`--first-tag`, kept as an option); the slim decoder at 384 px lost 0.019 test foramen Dice
+  (95% CI 0.005–0.036).
 - Compute against accuracy: the cascade halves the compute of the five-fold ensemble at almost the same hit rate. Running
   25 models instead of 5 is no more accurate, so the ensemble is saturated (`analysis/policy_pareto.py`). A single
   ResNet18 U-Net at 384 px needs 1/12 of the ensemble's compute and finds 3.4 points fewer foramina (95% CI 1.0–5.9;
@@ -207,7 +218,10 @@ correct, 6.4% silent errors. The foramen hit rate is about 1 point below the ful
 
 - Robustness: under synthetic changes the U-Net is most sensitive to noise (σ = 5 grey levels: −8.9 points). A 3×3 median
   filter recovers most of it without hurting clean images, and is kept as an option (`--pre median3`) because the data
-  has no such noise (`analysis/robust_stress.py`, `analysis/robust_defense.py`).
+  has no such noise (`analysis/robust_stress.py`, `analysis/robust_defense.py`). Retraining with noise augmentation
+  (seed 0) also removes the weakness (σ = 5 / 10: +10 / +35 points against the current INT8 model) without changing the
+  clean hit rate, but is not better than the median filter (+2.9 points, 95% CI −2.2 to +7.9) and has a 0.02 lower foramen
+  Dice on clean images, so it was not adopted (`analysis/robust_noiseaug.py`).
 
 ![Hit rate under synthetic image changes, with and without a median filter](docs/figures/robustness.svg)
 - Measuring latency on a laptop: wall-clock times of the same configuration varied by about ±25% between sessions, while
@@ -291,8 +305,8 @@ Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency acr
 | `deployment/bottleneck.py`, `deployment/unet_call_split.py`, `deployment/unet_int8_bench.py`, `deployment/pipeline_timing.py` | Where accuracy and time are lost; U-Net call breakdown; INT8 against FP32 |
 | `deployment/int8_quant.py`, `deployment/int8_ensemble.py`, `deployment/cascade_infer.py`, `deployment/single_small_lcc.py`, `deployment/distill_ensemble.py` | INT8 quantization, the cascade, a small single model, ensemble distillation |
 | `deployment/unet_perf_count.py`, `deployment/perf_count_layers.py` | OpenVINO per-node CPU profile of the U-Net (fusion check) and its mapping back to layers, MACs and INT8 / FP32 speed |
-| `deployment/no_throttle.py`, `deployment/cpu_timing/` | Opting out of Windows power throttling; sustained-load, core-scheduling and background-throttling benchmarks for laptop latency (PowerShell + Python) |
-| `analysis/policy_pareto.py`, `analysis/robust_stress.py`, `analysis/robust_remedy.py`, `analysis/robust_defense.py` | Compute against accuracy; synthetic stress tests and inference-time defenses |
+| `deployment/no_throttle.py`, `deployment/timing_env.py`, `deployment/cpu_timing/` | Opting out of Windows power throttling; logging memory, page file and power mode around each timing run; sustained-load, core-scheduling and background-throttling benchmarks for laptop latency (PowerShell + Python) |
+| `analysis/policy_pareto.py`, `analysis/robust_stress.py`, `analysis/robust_remedy.py`, `analysis/robust_defense.py`, `analysis/robust_noiseaug.py` | Compute against accuracy; synthetic stress tests, inference-time defenses and noise-augmented retraining |
 | `hardware/roofline_profile.py`, `hardware/roofline_workload.py`, `hardware/accel_model.py`, `hardware/accel_explore.py`, `hardware/accel_lowbit.py` | Rooflines, workload characterization and the analytical accelerator model, including bit width and 2:4 sparsity |
 | `hardware/qat_fx.py`, `hardware/qat_int4.py`, `hardware/sparse24.py`, `hardware/sparse_int8_verify.py`, `hardware/fx_diag.py`, `hardware/fx_seeds.py` | Quantization-aware training (INT8, 4-bit), 2:4 sparsity, integer and fixed-point verification |
 | `stage2/unet_tta.py`, `stage2/pseudo_label.py`, `stage2/kfold_pseudo.py` | Flip test-time augmentation and semi-supervised training, neither adopted |

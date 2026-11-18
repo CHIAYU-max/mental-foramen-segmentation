@@ -322,17 +322,21 @@ def low_bit():
 
 def deploy_latency():
     # 筆電 i5-13500H + RTX 4050,測試集 103 張;同一時段內才比(time9: 11/16 09:50–10:31,關掉 Windows 背景節流;time8: 11/15 10:41–10:49)
-    s = Svg(860, 470, "Each speed-up in the deployed pipeline, measured in one session",
-            "Laptop, mean wall-clock time per radiograph, 103 test radiographs, three rounds, Windows power throttling disabled for the process", "Latency per radiograph by configuration")
+    # 2026-11-18: 加第三段 time10(11/18 07:52–08:04,E / S 交替 4 輪);瘦身解碼器 11/18 起是正式部署版本
+    s = Svg(860, 630, "Each speed-up in the deployed pipeline, measured within one session",
+            "Laptop, mean wall-clock time per radiograph, 103 test radiographs, Windows power throttling disabled for the process", "Latency per radiograph by configuration")
     rows1 = [("Integrated pipeline (13 Nov)", 1216, "c", "1216 ms"), ("+ 32-class model INT8, union", 1063, "c", "1063 ms"),
              ("+ box-only mask upsampling", 940, "c", "940 ms"), ("+ 32-class model at 640 px", 890, "c", "890 ms"),
-             ("+ fast argmax (deployed)", 802, "a", "802 ms"), ("Deployed, U-Net FP32 instead of INT8", 1879, "b", "1879 ms (INT8: 2.34× faster)")]
-    s.text(24, 84, "Session 1: CPU (OpenVINO)", "t bold")
+             ("+ fast argmax", 802, "c", "802 ms"), ("Same, U-Net FP32 instead of INT8", 1879, "b", "1879 ms (INT8: 2.34× faster)")]
+    s.text(24, 84, "Session 1 (16 Nov, 3 rounds): CPU (OpenVINO)", "t bold")
     b = hbars(s, rows1, 300, 700, 94, 0, 2400, [0, 500, 1000, 1500, 2000], lambda t: f"{t}", 32)
-    rows2 = [("CPU, deployed (INT8)", 800, "a", "800 ms"), ("RTX 4050, U-Net FP32", 217, "b", "217 ms"), ("RTX 4050, U-Net FP16", 194, "b", "194 ms")]
-    s.text(24, b + 50, "Session 2: CPU and laptop GPU", "t bold")
+    rows2 = [("CPU, full decoder (INT8)", 800, "c", "800 ms"), ("RTX 4050, U-Net FP32", 217, "b", "217 ms"), ("RTX 4050, U-Net FP16", 194, "b", "194 ms")]
+    s.text(24, b + 50, "Session 2 (15 Nov): CPU and laptop GPU", "t bold")
     b2 = hbars(s, rows2, 300, 700, b + 60, 0, 2400, [0, 500, 1000, 1500, 2000], lambda t: f"{t}", 32)
-    s.text(530, b2 + 40, "Milliseconds per radiograph", "s small", "middle")
+    rows3 = [("CPU, full decoder (INT8)", 811, "c", "811 ms"), ("+ slim decoder (deployed)", 667, "a", "667 ms (−144 ms)")]
+    s.text(24, b2 + 50, "Session 3 (18 Nov, 4 alternating rounds): CPU", "t bold")
+    b3 = hbars(s, rows3, 300, 700, b2 + 60, 0, 2400, [0, 500, 1000, 1500, 2000], lambda t: f"{t}", 32)
+    s.text(530, b3 + 40, "Milliseconds per radiograph", "s small", "middle")
     s.save("deploy_latency")
 
 
