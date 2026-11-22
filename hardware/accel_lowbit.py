@@ -14,15 +14,19 @@ from hardware.accel_model import load_layers
 #     3. MAC 能耗: 乘法 0.2 pJ × (w·a / 64)(乘法器面積約與位元數乘積成正比),加法維持 32 位元累加 0.1 pJ;稀疏時只算實際做的一半。
 #     4. 部分和仍是 3 bytes(SRAM 讀寫各一次算 6 bytes),不隨位元寬度變。
 #     5. 精度不在這裡: 4 位元與 2:4 的命中率要看 qat_int4.py / 之後的稀疏實驗,這裡的命中率都沿用 INT8 前的數字。
+#     6. 1:4(2026-11-21 加,見 EXPERIMENTS.md「2026-11-21 逐層 N:M 稀疏敏感度」): 一般化成每 4 個留 keep 個(2:4 → 2、1:4 → 1),
+#        K 方向週期 ceil(K·keep/4),權重 bytes = keep/4 × (位元寬度 + 2) / 8,片上活化值讀取 × 4/keep(每列收 4/keep 個活化值選 1 個),
+#        MAC 只算實際做的 keep/4。2:4 的結果與 11/10 的版本相同(keep = 2 時公式不變)。
 #   輸出: compare_results/roofline/accel_lowbit/(sweep.csv、summary.md)。
-CONFIGS = [("INT8", 8, 8, False), ("W4A8", 4, 8, False), ("W4A4", 4, 4, False),
-           ("INT8 2:4", 8, 8, True), ("W4A8 2:4", 4, 8, True)]
+# 最後一欄 = 每 4 個權重留幾個(0 = dense)
+CONFIGS = [("INT8", 8, 8, 0), ("W4A8", 4, 8, 0), ("W4A4", 4, 4, 0),
+           ("INT8 2:4", 8, 8, 2), ("W4A8 2:4", 4, 8, 2), ("INT8 1:4", 8, 8, 1)]
 MHZ = 500
 MODEL = "stage2_unet_r34"
 
 
 def factors(w_bits, a_bits, sparse):
-    fw = 0.5 * (w_bits + 2) / 8 if sparse else w_bits / 8   # 每個「原本的」權重平均幾 bytes
+    fw = sparse / 4 * (w_bits + 2) / 8 if sparse else w_bits / 8   # 每個「原本的」權重平均幾 bytes(sparse = 每 4 個留幾個)
     return fw, a_bits / 8
 
 
@@ -41,6 +45,27 @@ def dram_traffic_lb(l, sram, fw, fa):
     return best
 
 
+
+def dram_traffic_lb2(l, sram, fw, fa):
+    """2026-11-22 切塊修正(Timeloop 核對 L4 高估 82% 之後,判準見 EXPERIMENTS.md「Timeloop 核對之後的三項」):
+    tm 不限 2 的次方(取放得下的最大值),兩種迴圈順序取小的;舊的 dram_traffic_lb 不動。
+      M 在外: 輸入塊留著、權重每個 M 塊重搬(tn = N 時權重只搬一次) = ai + w · (1 if tn = N else ceil(M/tm)) + ao
+      N 在外: 權重塊留著、輸入每個 N 塊重搬(tm = M 時只搬一次)   = w + ai · (1 if tm = M else ceil(N/tn)) + ao
+    片上容量式與舊版相同(tm·Cin + K·tn + tm·tn,忽略 halo)。"""
+    w, ai, ao = l["weights"] * fw, l["act_in"] * fa, l["act_out"] * fa
+    if w + ai + ao <= sram:
+        return w + ai + ao
+    best = math.inf
+    for tn in sorted({min(l["N"], 2 ** i) for i in range(0, 13)} | {l["N"]}):
+        tm = math.floor((sram - l["K"] * tn * fw) / ((l["Cin"] + tn) * fa))
+        if tm < 1:
+            continue
+        tm = min(tm, l["M"])
+        m_outer = ai + w * (1 if tn == l["N"] else math.ceil(l["M"] / tm)) + ao
+        n_outer = w + ai * (1 if tm == l["M"] else math.ceil(l["N"] / tn)) + ao
+        best = min(best, m_outer, n_outer)
+    return best
+
 def evaluate_lb(layers, array, sram_kb, bw, w_bits, a_bits, sparse):
     fw, fa = factors(w_bits, a_bits, sparse)
     sram = sram_kb * 1024
@@ -48,12 +73,12 @@ def evaluate_lb(layers, array, sram_kb, bw, w_bits, a_bits, sparse):
     cycles = traffic_total = latency = mac_done = onchip = 0.0
     dense_mac = 0.0
     for i, l in enumerate(layers):
-        k = math.ceil(l["K"] / 2) if sparse else l["K"]
+        k = math.ceil(l["K"] * sparse / 4) if sparse else l["K"]
         tiles = math.ceil(k / array) * math.ceil(l["N"] / array)
         cyc = tiles * (l["M"] + 3 * array - 2) - 1
         r, c = min(array, k), min(array, l["N"])
         wslot = (w_bits + 2) / 8 if sparse else w_bits / 8
-        onchip += tiles * (r * c * wslot + l["M"] * r * (2 if sparse else 1) * fa + l["M"] * c * 6)
+        onchip += tiles * (r * c * wslot + l["M"] * r * (4 / sparse if sparse else 1) * fa + l["M"] * c * 6)
         traffic = dram_traffic_lb(l, sram, fw, fa)
         nxt = layers[i + 1] if i + 1 < len(layers) else None
         if (nxt and nxt["in_hw"] == l["out_hw"] and l["act_out"] <= nxt["act_in"]
@@ -63,7 +88,7 @@ def evaluate_lb(layers, array, sram_kb, bw, w_bits, a_bits, sparse):
         cycles += cyc
         traffic_total += traffic
         dense_mac += l["mac"]
-        mac_done += l["mac"] / 2 if sparse else l["mac"]
+        mac_done += l["mac"] * sparse / 4 if sparse else l["mac"]
     skip = skip_bytes(layers) * fa
     if sram < skip + max_ws / 2:
         traffic_total += 2 * skip
@@ -82,7 +107,7 @@ def main():
     for array in ARRAYS:
         for sram_kb in SRAM_KB:
             for bw in BW_GBS:
-                a, b = evaluate(layers, array, sram_kb, bw, MHZ, "ws"), evaluate_lb(layers, array, sram_kb, bw, 8, 8, False)
+                a, b = evaluate(layers, array, sram_kb, bw, MHZ, "ws"), evaluate_lb(layers, array, sram_kb, bw, 8, 8, 0)
                 for key in a:
                     assert math.isclose(a[key], b[key], rel_tol=1e-9), (array, sram_kb, bw, key, a[key], b[key])
     print(f"INT8 dense 與 accel_explore.py 相同: {len(ARRAYS) * len(SRAM_KB) * len(BW_GBS)} 組")
@@ -109,7 +134,7 @@ def main():
         return next(r for r in rows if r["config"] == config and r["policy"] == policy and r["array"] == array
                     and r["sram_kb"] == sram_kb and r["bw_gbs"] == bw)
 
-    lines = ["# 加速器分析模型 L2.5:位元寬度與 2:4 稀疏", "",
+    lines = ["# 加速器分析模型 L2.5:位元寬度與 2:4 / 1:4 稀疏", "",
              f"由 `accel_lowbit.py` 產生;{MHZ} MHz、weight-stationary、每個 ROI;同樣 PE 數,不含面積;假設見程式開頭。"
              "命中率不在這張表(要看 4-bit QAT 與稀疏實驗)。", ""]
     for policy in ("R34/512 five-fold", "R34/512 cascade"):

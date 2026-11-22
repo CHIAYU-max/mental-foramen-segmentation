@@ -264,8 +264,17 @@ Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency acr
 ![Modeled latency by PE array and SRAM size](docs/figures/accelerator_latency.png)
 
 - In the analytical model, 4-bit weights or activations barely change latency at the same number of PEs (the array is
-  compute-bound), while 2:4 structured sparsity roughly halves it (64×64 array: 140 → 80 ms per ROI, energy 0.62× INT8).
-  These are optimistic first-order estimates without area or index-selection cost (`hardware/accel_lowbit.py`).
+  compute-bound), while 2:4 structured sparsity roughly halves it. For the deployed configuration (slim decoder, INT8
+  cascade with 2.58 models per ROI on average, skip and residual feature maps tracked layer by layer), a 64×64 array with
+  1 MB of SRAM takes 45 / 27 / 19 ms per ROI for dense / 2:4 / 1:4 INT8 at 12.8 GB/s and 68 / 60 / 53 ms at 4 GB/s; INT8
+  with 2:4 uses 0.19× the energy of the five-fold main model in INT8. These are first-order estimates without area or
+  index-selection cost (`hardware/accel_lowbit.py`, `hardware/accel_deploy.py --tiling v2`, `hardware/skip_traffic.py`).
+- Cross-check against Timeloop and Sparseloop on four layers, with pass criteria set before each run: the model's first
+  tiling never underestimated DRAM traffic, but it overestimated a layer whose weights nearly fill the SRAM by 82%. The
+  corrected tiling is within 0.93–0.99× of Timeloop's minimum traffic on all four layers, also with the array held at full
+  speed. For 2:4, weight traffic agrees within 3% and the cycle ratio (0.50) matches on two of three layers; on the third
+  the model rounds 4.5 passes of the array up to 5, as the hardware has to. Energy constants are not checked externally
+  (`hardware/timeloop_check.py`, `hardware/timeloop_followup.py`, `hardware/tiling_v2_check.py`).
 - Accuracy, as cross-validation hit rate against a pre-set margin of about 1 point: 4-bit activations fail; 2:4 sparsity
   works once the 32→3 output layer stays dense, and stacks with INT8 over five seeds (`hardware/qat_int4.py`,
   `hardware/sparse24.py`). The accelerator candidate is INT8 with 2:4 sparsity on 45 of 47 convolutions.
@@ -308,6 +317,8 @@ Measured per-layer roofline of the U-Net on an RTX 3090, and modeled latency acr
 | `deployment/no_throttle.py`, `deployment/timing_env.py`, `deployment/cpu_timing/` | Opting out of Windows power throttling; logging memory, page file and power mode around each timing run; sustained-load, core-scheduling and background-throttling benchmarks for laptop latency (PowerShell + Python) |
 | `analysis/policy_pareto.py`, `analysis/robust_stress.py`, `analysis/robust_remedy.py`, `analysis/robust_defense.py`, `analysis/robust_noiseaug.py` | Compute against accuracy; synthetic stress tests, inference-time defenses and noise-augmented retraining |
 | `hardware/roofline_profile.py`, `hardware/roofline_workload.py`, `hardware/accel_model.py`, `hardware/accel_explore.py`, `hardware/accel_lowbit.py` | Rooflines, workload characterization and the analytical accelerator model, including bit width and 2:4 sparsity |
+| `hardware/accel_deploy.py`, `hardware/skip_traffic.py` | The accelerator model on the deployed configuration, with skip and residual feature maps tracked per layer |
+| `hardware/timeloop_check.py`, `hardware/timeloop_followup.py`, `hardware/tiling_v2_check.py` | Cross-check of the accelerator model against Timeloop and Sparseloop (dense, full-speed and 2:4), and of the corrected tiling |
 | `hardware/qat_fx.py`, `hardware/qat_int4.py`, `hardware/sparse24.py`, `hardware/sparse_int8_verify.py`, `hardware/fx_diag.py`, `hardware/fx_seeds.py` | Quantization-aware training (INT8, 4-bit), 2:4 sparsity, integer and fixed-point verification |
 | `stage2/unet_tta.py`, `stage2/pseudo_label.py`, `stage2/kfold_pseudo.py` | Flip test-time augmentation and semi-supervised training, neither adopted |
 | `analysis/unlabeled_pool.py`, `analysis/unlabeled_predict.py`, `analysis/unlabeled_shift.py` | Distribution check on unlabeled ROIs |
